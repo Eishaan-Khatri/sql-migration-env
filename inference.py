@@ -23,11 +23,12 @@ import traceback
 # Server URL for the environment
 ENV_BASE_URL = os.getenv("ENV_BASE_URL", "http://localhost:7860")
 
-# LLM Configuration
-API_BASE_URL = os.getenv("API_BASE_URL") or "https://router.huggingface.co/v1"
-MODEL_NAME = os.getenv("MODEL_NAME") or "Qwen/Qwen2.5-72B-Instruct"
-# API key: spec requires OPENAI_API_KEY as primary variable name
-API_KEY = os.getenv("OPENAI_API_KEY") or os.getenv("HF_TOKEN") or os.getenv("API_KEY")
+# LLM Configuration — defaults required for API_BASE_URL and MODEL_NAME only
+API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
+MODEL_NAME = os.getenv("MODEL_NAME", "Qwen/Qwen2.5-72B-Instruct")
+HF_TOKEN = os.getenv("HF_TOKEN")  # No default — must be set by user
+# Also support OPENAI_API_KEY as primary (per spec) and API_KEY as alias
+API_KEY = os.getenv("OPENAI_API_KEY") or HF_TOKEN or os.getenv("API_KEY")
 
 SYSTEM_PROMPT = """You are an autonomous SQLite database migration engine. You receive the current schema and a target schema. Write SQL to transform the current state to the target state without losing row data.
 
