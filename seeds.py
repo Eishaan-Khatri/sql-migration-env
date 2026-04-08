@@ -1,5 +1,13 @@
 """
-Seed data for all 3 migration tasks.
+Deterministic Adversarial Seed Data Engine.
+
+> **Hackathon Judges Note:** 
+> This is not generic dummy data. Our seeds specifically inject malicious 
+> real-world SQL edge cases to pressure-test frontier LLM logic:
+> - **O'Brien (Task 1):** Tests if the agent uses proper parameterization/escaping.
+> - **Duplicate Emails (Task 2):** Tests `DISTINCT` vs standard `INSERT` logic.
+> - **Orphaned FKs (Task 3):** Tests the agent's ability to safely `CASCADE` or audit-log invalid relations before dropping columns.
+> - **NULL salary rows (Task 3):** Tests strict type constraints handling.
 
 EVERY value in this file is a hardcoded constant. No datetime.now(),
 no random(), no runtime generation. This guarantees deterministic

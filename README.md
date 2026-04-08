@@ -18,11 +18,23 @@ tags:
 
 ---
 
-## Why This Matters
+## Why This Matters (Real-World Utility)
 
-Database schema migrations are among the most error-prone tasks in software engineering. Every production system faces them as application models evolve. This environment trains agents to autonomously reconcile schema drift the way a real CI/CD pipeline would — given a broken current state and a target state, compute and safely execute the transformation sequence.
+Database schema migrations are among the most error-prone, high-stakes tasks in software engineering. Every production system faces them as application models evolve, yet they are extremely difficult to automate safely because data must be perfectly preserved. 
 
-**Real-world analogues:** Flyway, Liquibase, Django `makemigrations`, Terraform plan/apply. This is that problem, reduced to its RL core.
+This environment trains AI agents to autonomously reconcile schema drift the exact way a real CI/CD pipeline would — given a flawed current state and an ideal target state, the agent must compute and safely execute the transformation sequence using raw SQL.
+
+**Real-world analogues:** `Flyway`, `Liquibase`, Django `makemigrations`, `Terraform` state transitions. This environment models that exact problem, reduced to an agentic RL core.
+
+---
+
+## Evaluation Philosophy & Anti-Exploit Mechanics
+
+Unlike simplistic environments that merely string-match SQL schemas, this environment uses a **deep structural reconciliation grader** built specifically to prevent LLM gamification:
+
+1. **Zero-Sum Exploit Protection:** Naive agents will often execute `DROP TABLE x; CREATE TABLE x (...)` to easily match the target schema, silently destroying all data. Our grader actively runs `SELECT COUNT(*)` and data-integrity hashing. If a table's schema matches but the data is gone, the score is brutally clamped to `0.01`.
+2. **Granular Partial Credit:** Multi-step migrations (like Task 3's 4-table cascade) require 15+ steps. Binary pass/fail rewards provide zero learning signal. Our grader assigns fractional weights to individual FK constraints, data type coercions, and orphaned record audit logs, providing continuous RL reward gradients.
+3. **Deterministic Adversarial Seeds:** Our injected data isn't generic. It includes edge cases that break naive SQL (e.g. `O'Brien` testing quote-escaping parametrization) and orphaned foreign keys testing `CASCADE` knowledge.
 
 ---
 
