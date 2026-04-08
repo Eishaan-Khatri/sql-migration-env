@@ -107,19 +107,19 @@ async def list_tasks() -> Dict[str, Any]:
                 "name": "column-restructure",
                 "description": "Merge first_name and last_name into a single full_name column without data loss",
                 "difficulty": "easy",
-                "max_steps": 15,
+                "max_steps": 20,
             },
             {
                 "name": "table-normalization",
                 "description": "Decompose a flat purchases table into normalized customers and orders tables with FK",
                 "difficulty": "medium",
-                "max_steps": 15,
+                "max_steps": 20,
             },
             {
                 "name": "cascade-migration",
                 "description": "Multi-table FK cascade with type coercion, NULL handling, and orphan audit logging",
                 "difficulty": "hard",
-                "max_steps": 15,
+                "max_steps": 20,
             },
         ],
         "action_schema": {
@@ -154,7 +154,7 @@ async def grade_task(
                 "initial_score": max(0.0, min(1.0, obs.migration_progress)),
                 "grader_functional": True,
                 "reward_range": [0.0, 1.0],
-                "max_steps": 15,
+                "max_steps": 20,
             }
             env.close()
         except Exception as e:
