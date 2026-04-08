@@ -58,7 +58,7 @@ conn.execute("ALTER TABLE users_new RENAME TO users")
 conn.commit()
 score = reconciler.score(conn)
 print(f"PASS: Score after correct Task 1: {score:.2f}")
-assert score == 1.0, f"Expected 1.0, got {score}"
+assert score == 0.99, f"Expected 0.99, got {score}"
 conn.close()
 
 # Test 6: Full environment
@@ -88,9 +88,9 @@ for i, sql in enumerate(steps):
     print(f"  Step {i+1}: reward={obs.reward:.2f}, progress={obs.migration_progress:.2f}, done={obs.done}")
 
 assert obs.done == True
-assert obs.migration_progress == 1.0, f"Expected 1.0, got {obs.migration_progress}"
+assert obs.migration_progress == 0.99, f"Expected 0.99, got {obs.migration_progress}"
 env.close()
-print("PASS: Full migration episode completed with score 1.0")
+print("PASS: Full migration episode completed with score 0.99")
 
 # Test 7: Task 2 grader
 conn = sqlite3.connect(":memory:")

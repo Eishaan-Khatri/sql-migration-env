@@ -157,7 +157,7 @@ class StateReconciler:
         if has_full_name and old_cols_gone and row_count == 0:
             score = min(score, 0.1)
 
-        return min(1.0, score)
+        return max(0.01, min(0.99, score))
 
     # =========================================================================
     # Task 2: Table Normalization
@@ -223,7 +223,7 @@ class StateReconciler:
             if c_count == 0 and o_count == 0:
                 score = min(score, 0.1)
 
-        return min(1.0, score)
+        return max(0.01, min(0.99, score))
 
     # =========================================================================
     # Task 3: Cascade Migration
@@ -343,4 +343,4 @@ class StateReconciler:
         if "employees" in tables and _get_row_count(conn, "employees") == 0:
             score = min(score, 0.1)
 
-        return min(1.0, score)
+        return max(0.01, min(0.99, score))

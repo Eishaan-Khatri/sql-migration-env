@@ -171,7 +171,7 @@ class DbMigrationEnvironment(Environment):
                 target_schema_sql=self._task_config["target_ddl"],
                 last_execution_result="Error: Environment not initialized. Call reset() first.",
                 step_number=self._step_count,
-                migration_progress=0.0,
+                migration_progress=0.01,
                 task_name=self.task_name,
                 metadata={"error": "not_initialized"},
             )
@@ -200,7 +200,7 @@ class DbMigrationEnvironment(Environment):
         current_score, step_reward = self._reconciler.compute_step_reward(self._conn)
 
         # Episode termination: submit_final, max steps (20), OR perfect score
-        done = action.submit_final or self._step_count >= 20 or current_score >= 1.0
+        done = action.submit_final or self._step_count >= 20 or current_score >= 0.99
 
         # Update state
         self._state.step_count = self._step_count
