@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=45", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sql-migration-env"
+version = "0.1.0"
+description = "SQL Schema Migration Agent — OpenEnv environment for benchmarking autonomous database migration agents"
+requires-python = ">=3.10"
+dependencies = [
+    "openenv-core>=0.2.1",
+    "fastapi>=0.115.0",
+    "pydantic>=2.0.0",
+    "uvicorn[standard]>=0.24.0",
+    "openai>=1.0.0",
+    "websockets>=12.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+]
+
+[project.scripts]
+server = "server.app:main"
+
+[tool.setuptools]
+include-package-data = true
+packages = ["sql_migration_env", "sql_migration_env.server"]
+package-dir = { "sql_migration_env" = ".", "sql_migration_env.server" = "server" }
