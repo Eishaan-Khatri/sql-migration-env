@@ -30,7 +30,7 @@ HF_TOKEN = os.getenv("HF_TOKEN")  # No default — must be set by user
 # Also support OPENAI_API_KEY as primary (per spec) and API_KEY as alias
 API_KEY = os.getenv("OPENAI_API_KEY") or HF_TOKEN or os.getenv("API_KEY")
 
-SYSTEM_PROMPT = """You are an autonomous SQLite database migration engine. You receive the current schema and a target schema. Write SQL to transform the current state to the target state without losing row data.
+SYSTEM_PROMPT_TEMPLATE = """You are an autonomous SQLite database migration engine. You receive the current schema and a target schema. Write SQL to transform the current state to the target state without losing row data.
 
 CRITICAL — SQLite-specific rules (violations cause immediate errors):
 1. SQLite does NOT support ALTER TABLE ADD CONSTRAINT — never use it.
@@ -45,11 +45,22 @@ CRITICAL — SQLite-specific rules (violations cause immediate errors):
 10. Execute exactly ONE SQL statement per step.
 11. When migration is complete (schemas match, data preserved), set submit_final to true IMMEDIATELY.
 
-Respond ONLY with valid JSON — no markdown, no code blocks, no text outside the object:
-{"sql_command": "your SQL here", "reasoning": "why", "submit_final": false}"""
+TARGET SCHEMA (fixed — achieve this exactly):
+{target_ddl}
 
-ALL_TASKS = ["column-restructure", "table-normalization", "cascade-migration"]
-MAX_STEPS = 20  # 20 gives Task 3 enough budget for 4-table cascade + audit
+Respond ONLY with valid JSON — no markdown, no code blocks, no text outside the object:
+{{"sql_command": "your SQL here", "reasoning": "why", "submit_final": false}}"""
+
+ALL_TASKS = [
+    "column-restructure",
+    "soft-delete-restoration",
+    "table-normalization",
+    "schema-version-merge",
+    "multi-entity-extraction",
+    "cascade-migration",
+    "dual-source-consolidation",
+]
+MAX_STEPS = 20  # Global fallback; per-task limits override this
 MAX_PARSE_ERRORS = 5  # Higher tolerance for thinking models (Qwen3, DeepSeek-R1)
 
 # Auto-submit threshold: if migration_progress >= this, force submit_final
@@ -139,18 +150,24 @@ def run_task_local(task_name: str) -> dict:
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     from server.environment import DbMigrationEnvironment
     from models import MigrationAction
+    import seeds
 
     env = DbMigrationEnvironment(task_name=task_name)
+
+    # Use task-specific step budget (defaults to global MAX_STEPS)
+    task_max_steps = seeds.TASKS.get(task_name, {}).get("max_steps", MAX_STEPS)
 
     print(f"[START] task={task_name} env=sql-migration-agent model={MODEL_NAME}", flush=True)
 
     obs = env.reset()
-    history = [{"role": "system", "content": SYSTEM_PROMPT}]
 
-    # Initial observation message
+    # Build task-specific system prompt with target DDL baked in (sent ONCE)
+    task_system_prompt = SYSTEM_PROMPT_TEMPLATE.format(target_ddl=obs.target_schema_sql)
+    history = [{"role": "system", "content": task_system_prompt}]
+
+    # Initial observation — only current schema (target already in system prompt)
     initial_msg = (
         f"CURRENT DATABASE SCHEMA:\n{obs.current_schema_sql}\n\n"
-        f"TARGET SCHEMA:\n{obs.target_schema_sql}\n\n"
         f"Status: {obs.last_execution_result}\n"
         f"Migration progress: {obs.migration_progress:.2f}\n\n"
         f"Write your first SQL command to begin the migration."
@@ -164,7 +181,7 @@ def run_task_local(task_name: str) -> dict:
     done = False
     peak_score = 0.0  # Track the highest score we've reached
 
-    for step in range(MAX_STEPS):
+    for step in range(task_max_steps):
         if done:
             break
 
@@ -253,10 +270,11 @@ def run_task_local(task_name: str) -> dict:
         # Add to conversation history
         history.append({"role": "assistant", "content": json.dumps(action_dict)})
 
+        # Lean feedback — target is already in the system prompt, no need to repeat
         feedback_msg = (
             f"EXECUTION RESULT: {obs.last_execution_result}\n\n"
             f"CURRENT SCHEMA:\n{obs.current_schema_sql}\n\n"
-            f"Migration progress: {obs.migration_progress:.2f}"
+            f"Progress: {obs.migration_progress:.2f}"
         )
         if done:
             feedback_msg += "\n\nEpisode complete."
@@ -309,11 +327,9 @@ def main():
     # Summary
     scores = list(results.values())
     avg = sum(scores) / len(scores) if scores else 0.0
+    scores_str = " ".join(f"{t}={s:.2f}" for t, s in results.items())
     print(
-        f"[SUMMARY] task1={results.get('column-restructure', 0):.2f} "
-        f"task2={results.get('table-normalization', 0):.2f} "
-        f"task3={results.get('cascade-migration', 0):.2f} "
-        f"avg={avg:.2f}",
+        f"[SUMMARY] {scores_str} avg={avg:.2f}",
         flush=True,
     )
 

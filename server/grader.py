@@ -29,6 +29,22 @@ from seeds import (
     TASK3_EXPECTED_AUDIT_ENTRIES,
     TASK3_EXPECTED_EMPLOYEE_COUNT,
     TASK3_EXPECTED_SALARIES,
+    TASK4_EXPECTED_ROW_COUNT,
+    TASK4_EXPECTED_ID_SUM,
+    TASK4_EXPECTED_DELETED_COUNT,
+    TASK4_EXPECTED_ACTIVE_COUNT,
+    TASK5_EXPECTED_ROW_COUNT,
+    TASK5_EXPECTED_PRICE_SUM,
+    TASK5_EXPECTED_BOTH_COUNT,
+    TASK6_EXPECTED_SALESPERSON_COUNT,
+    TASK6_EXPECTED_CUSTOMER_COUNT,
+    TASK6_EXPECTED_PRODUCT_COUNT,
+    TASK6_EXPECTED_SALES_COUNT,
+    TASK6_EXPECTED_DATA_ISSUES_COUNT,
+    TASK7_EXPECTED_UNIFIED_CUSTOMERS,
+    TASK7_EXPECTED_BOTH_SOURCE_COUNT,
+    TASK7_EXPECTED_UNIFIED_ORDERS,
+    TASK7_EXPECTED_MIGRATION_ISSUES,
 )
 
 
@@ -36,7 +52,8 @@ def _get_table_names(conn: sqlite3.Connection) -> Set[str]:
     """Get all table names in the database."""
     try:
         cursor = conn.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name"
+            "SELECT name FROM sqlite_master WHERE type='table' "
+            "AND name NOT LIKE 'sqlite_%' ORDER BY name"
         )
         return {row[0] for row in cursor.fetchall()}
     except Exception:
@@ -98,10 +115,18 @@ class StateReconciler:
                 return self._score_task2(conn)
             elif self.task_name == "cascade-migration":
                 return self._score_task3(conn)
+            elif self.task_name == "soft-delete-restoration":
+                return self._score_task4(conn)
+            elif self.task_name == "schema-version-merge":
+                return self._score_task5(conn)
+            elif self.task_name == "multi-entity-extraction":
+                return self._score_task6(conn)
+            elif self.task_name == "dual-source-consolidation":
+                return self._score_task7(conn)
             else:
-                return 0.0
+                return 0.01
         except Exception:
-            return 0.0
+            return 0.01
 
     def compute_step_reward(self, conn: sqlite3.Connection) -> Tuple[float, float]:
         """
@@ -173,6 +198,11 @@ class StateReconciler:
     #          order_count=0.2, no_null_ids=0.1, integrity=0.2
 
     def _score_task2(self, conn: sqlite3.Connection) -> float:
+        # Re-assert FK enforcement to prevent PRAGMA bypass exploit
+        try:
+            conn.execute("PRAGMA foreign_keys = ON")
+        except Exception:
+            pass
         score = 0.0
         tables = _get_table_names(conn)
 
@@ -242,6 +272,11 @@ class StateReconciler:
     # Total max = 0.90 for all grader checks + 0.10 integrity = 1.00
 
     def _score_task3(self, conn: sqlite3.Connection) -> float:
+        # Re-assert FK enforcement to prevent PRAGMA bypass exploit
+        try:
+            conn.execute("PRAGMA foreign_keys = ON")
+        except Exception:
+            pass
         score = 0.0
         tables = _get_table_names(conn)
 
@@ -348,6 +383,374 @@ class StateReconciler:
 
         # Exploit check: if employees table is empty
         if "employees" in tables and _get_row_count(conn, "employees") == 0:
+            score = min(score, 0.1)
+
+        return max(0.01, min(0.99, score))
+
+    # =========================================================================
+    # Task 4: Soft-Delete Restoration (Easy)
+    # =========================================================================
+
+    def _score_task4(self, conn: sqlite3.Connection) -> float:
+        score = 0.0
+        tables = _get_table_names(conn)
+
+        if "products" not in tables:
+            return 0.01
+
+        cols = _get_column_names(conn, "products")
+
+        # is_deleted column exists (+0.15)
+        if "is_deleted" in cols:
+            score += 0.15
+
+        # deleted_at column exists (+0.10)
+        if "deleted_at" in cols:
+            score += 0.10
+
+        # Row count = 8 (+0.20)
+        row_count = _get_row_count(conn, "products")
+        if row_count == TASK4_EXPECTED_ROW_COUNT:
+            score += 0.20
+
+        # Active products: is_deleted=0, deleted_at IS NULL (+0.25)
+        if "is_deleted" in cols:
+            try:
+                cursor = conn.execute(
+                    "SELECT COUNT(*) FROM products WHERE is_deleted = 0 AND deleted_at IS NULL"
+                )
+                active = cursor.fetchone()[0]
+                if active == TASK4_EXPECTED_ACTIVE_COUNT:
+                    score += 0.25
+            except Exception:
+                pass
+
+        # Restored products: is_deleted=1, deleted_at IS NOT NULL (+0.20)
+        if "is_deleted" in cols:
+            try:
+                cursor = conn.execute(
+                    "SELECT COUNT(*) FROM products WHERE is_deleted = 1 AND deleted_at IS NOT NULL"
+                )
+                restored = cursor.fetchone()[0]
+                if restored == TASK4_EXPECTED_DELETED_COUNT:
+                    score += 0.20
+            except Exception:
+                pass
+
+        # SUM(id) fingerprint = 36 — no phantom rows (+0.10)
+        try:
+            cursor = conn.execute("SELECT SUM(id) FROM products")
+            id_sum = cursor.fetchone()[0]
+            if id_sum == TASK4_EXPECTED_ID_SUM:
+                score += 0.10
+        except Exception:
+            pass
+
+        # Exploit check
+        if row_count == 0:
+            score = min(score, 0.1)
+
+        return max(0.01, min(0.99, score))
+
+    # =========================================================================
+    # Task 5: Schema Version Merge (Medium)
+    # =========================================================================
+
+    def _score_task5(self, conn: sqlite3.Connection) -> float:
+        # Re-assert FK enforcement
+        try:
+            conn.execute("PRAGMA foreign_keys = ON")
+        except Exception:
+            pass
+        score = 0.0
+        tables = _get_table_names(conn)
+
+        if "products" not in tables:
+            return 0.01
+
+        cols = _get_column_names(conn, "products")
+
+        # Schema completeness: all 8 columns (+0.10)
+        expected_cols = {"id", "name", "price", "category", "supplier", "brand", "sku", "source"}
+        if expected_cols.issubset(cols):
+            score += 0.10
+
+        # Row count = 9 (+0.15)
+        row_count = _get_row_count(conn, "products")
+        if row_count == TASK5_EXPECTED_ROW_COUNT:
+            score += 0.15
+
+        # PRICE_SUM fingerprint (+0.20)
+        try:
+            cursor = conn.execute("SELECT ROUND(SUM(price), 2) FROM products")
+            price_sum = cursor.fetchone()[0]
+            if price_sum is not None and abs(price_sum - TASK5_EXPECTED_PRICE_SUM) < 0.02:
+                score += 0.20
+        except Exception:
+            pass
+
+        # source='both' for conflicted ids 1,2 (+0.15)
+        if "source" in cols:
+            try:
+                cursor = conn.execute(
+                    "SELECT COUNT(*) FROM products WHERE source = 'both'"
+                )
+                both_count = cursor.fetchone()[0]
+                if both_count == TASK5_EXPECTED_BOTH_COUNT:
+                    score += 0.15
+            except Exception:
+                pass
+
+        # v2 name wins for conflicted rows (+0.15)
+        try:
+            cursor = conn.execute("SELECT name FROM products WHERE id = 2")
+            row = cursor.fetchone()
+            if row and "Updated" in row[0]:
+                score += 0.15
+        except Exception:
+            pass
+
+        # No NULL prices (+0.10)
+        try:
+            cursor = conn.execute("SELECT COUNT(*) FROM products WHERE price IS NULL")
+            null_count = cursor.fetchone()[0]
+            if null_count == 0:
+                score += 0.10
+        except Exception:
+            pass
+
+        # PRAGMA integrity_check (+0.15)
+        try:
+            cursor = conn.execute("PRAGMA integrity_check")
+            result = cursor.fetchone()[0]
+            if result == "ok":
+                score += 0.15
+        except Exception:
+            pass
+
+        # Exploit check
+        if row_count == 0:
+            score = min(score, 0.1)
+
+        return max(0.01, min(0.99, score))
+
+    # =========================================================================
+    # Task 6: Multi-Entity Extraction (Medium — Hard End)
+    # =========================================================================
+
+    def _score_task6(self, conn: sqlite3.Connection) -> float:
+        # Re-assert FK enforcement
+        try:
+            conn.execute("PRAGMA foreign_keys = ON")
+        except Exception:
+            pass
+        score = 0.0
+        tables = _get_table_names(conn)
+
+        # All 5 tables exist (+0.10)
+        required = {"salespersons", "customers", "products", "sales", "data_issues"}
+        if required.issubset(tables):
+            score += 0.10
+
+        # salesperson count = 3 (+0.10)
+        if "salespersons" in tables:
+            count = _get_row_count(conn, "salespersons")
+            if count == TASK6_EXPECTED_SALESPERSON_COUNT:
+                score += 0.10
+
+        # customer count = 3 (invalid excluded) (+0.12)
+        if "customers" in tables:
+            count = _get_row_count(conn, "customers")
+            if count == TASK6_EXPECTED_CUSTOMER_COUNT:
+                score += 0.12
+
+        # product count = 5 (+0.10)
+        if "products" in tables:
+            count = _get_row_count(conn, "products")
+            if count == TASK6_EXPECTED_PRODUCT_COUNT:
+                score += 0.10
+
+        # sales count = 11 (bad row excluded) (+0.12)
+        if "sales" in tables:
+            count = _get_row_count(conn, "sales")
+            if count == TASK6_EXPECTED_SALES_COUNT:
+                score += 0.12
+
+        # All 3 FKs present in sales (+0.15)
+        if "sales" in tables:
+            fk_count = 0
+            if _has_foreign_key(conn, "sales", "salespersons"): fk_count += 1
+            if _has_foreign_key(conn, "sales", "customers"): fk_count += 1
+            if _has_foreign_key(conn, "sales", "products"): fk_count += 1
+            score += 0.05 * fk_count  # 0.15 total for all 3
+
+        # data_issues count = 1, for row 6 (+0.11)
+        if "data_issues" in tables:
+            count = _get_row_count(conn, "data_issues")
+            if count == TASK6_EXPECTED_DATA_ISSUES_COUNT:
+                score += 0.11
+
+        # alice email is trimmed (+0.10)
+        if "salespersons" in tables:
+            try:
+                cursor = conn.execute(
+                    "SELECT email FROM salespersons WHERE name LIKE '%Alice%'"
+                )
+                row = cursor.fetchone()
+                if row and row[0] == "alice@company.com":
+                    score += 0.10
+            except Exception:
+                pass
+
+        # PRAGMA integrity_check (+0.10)
+        try:
+            cursor = conn.execute("PRAGMA integrity_check")
+            result = cursor.fetchone()[0]
+            if result == "ok":
+                score += 0.10
+        except Exception:
+            pass
+
+        # Exploit check
+        sales_count = _get_row_count(conn, "sales") if "sales" in tables else 0
+        if sales_count == 0 and "sales" in tables:
+            score = min(score, 0.1)
+
+        return max(0.01, min(0.99, score))
+
+    # =========================================================================
+    # Task 7: Dual-Source Consolidation (Hard)
+    # =========================================================================
+
+    def _score_task7(self, conn: sqlite3.Connection) -> float:
+        # Re-assert FK enforcement
+        try:
+            conn.execute("PRAGMA foreign_keys = ON")
+        except Exception:
+            pass
+        score = 0.0
+        tables = _get_table_names(conn)
+
+        # All 4 tables exist (+0.05)
+        required = {"unified_customers", "unified_products", "unified_orders", "migration_issues"}
+        if required.issubset(tables):
+            score += 0.05
+
+        # unified_customers count = 7 (+0.08)
+        if "unified_customers" in tables:
+            count = _get_row_count(conn, "unified_customers")
+            if count == TASK7_EXPECTED_UNIFIED_CUSTOMERS:
+                score += 0.08
+
+        # source='both' for email-matched records (+0.08)
+        if "unified_customers" in tables:
+            try:
+                cursor = conn.execute(
+                    "SELECT COUNT(*) FROM unified_customers WHERE source = 'both'"
+                )
+                both = cursor.fetchone()[0]
+                if both == TASK7_EXPECTED_BOTH_SOURCE_COUNT:
+                    score += 0.08
+            except Exception:
+                pass
+
+        # Legacy amount coercion — check unified_orders has REAL amounts (+0.10)
+        if "unified_orders" in tables:
+            try:
+                cursor = conn.execute(
+                    "SELECT COUNT(*) FROM unified_orders WHERE typeof(amount) = 'real' OR typeof(amount) = 'integer'"
+                )
+                real_count = cursor.fetchone()[0]
+                order_count = _get_row_count(conn, "unified_orders")
+                if real_count == order_count and order_count > 0:
+                    score += 0.10
+            except Exception:
+                pass
+
+        # NULL currency → 'USD' fill (+0.07)
+        if "unified_orders" in tables:
+            try:
+                cursor = conn.execute(
+                    "SELECT COUNT(*) FROM unified_orders WHERE currency IS NULL"
+                )
+                null_curr = cursor.fetchone()[0]
+                if null_curr == 0:
+                    score += 0.07
+            except Exception:
+                pass
+
+        # tx_status mapped to strings (+0.10)
+        if "unified_orders" in tables:
+            try:
+                cursor = conn.execute(
+                    "SELECT COUNT(*) FROM unified_orders WHERE typeof(status) = 'text'"
+                )
+                text_count = cursor.fetchone()[0]
+                order_count = _get_row_count(conn, "unified_orders")
+                if text_count == order_count and order_count > 0:
+                    score += 0.10
+            except Exception:
+                pass
+
+        # subscription_tier mapped to strings (+0.08)
+        if "unified_customers" in tables:
+            try:
+                cursor = conn.execute(
+                    "SELECT COUNT(*) FROM unified_customers WHERE typeof(tier) = 'text'"
+                )
+                text_count = cursor.fetchone()[0]
+                cust_count = _get_row_count(conn, "unified_customers")
+                if text_count == cust_count and cust_count > 0:
+                    score += 0.08
+            except Exception:
+                pass
+
+        # migration_issues count = 2 (+0.08)
+        if "migration_issues" in tables:
+            count = _get_row_count(conn, "migration_issues")
+            if count == TASK7_EXPECTED_MIGRATION_ISSUES:
+                score += 0.08
+
+        # Orphaned transaction in issues (+0.07)
+        if "migration_issues" in tables:
+            try:
+                cursor = conn.execute(
+                    "SELECT COUNT(*) FROM migration_issues WHERE issue_type = 'orphaned_record'"
+                )
+                orphan_issues = cursor.fetchone()[0]
+                if orphan_issues >= 1:
+                    score += 0.07
+            except Exception:
+                pass
+
+        # NULL email customer in issues (+0.07)
+        if "migration_issues" in tables:
+            try:
+                cursor = conn.execute(
+                    "SELECT COUNT(*) FROM migration_issues WHERE issue_type = 'null_email'"
+                )
+                null_issues = cursor.fetchone()[0]
+                if null_issues >= 1:
+                    score += 0.07
+            except Exception:
+                pass
+
+        # FK integrity on unified_orders (+0.10)
+        if "unified_orders" in tables:
+            if _has_foreign_key(conn, "unified_orders", "unified_customers"):
+                score += 0.10
+
+        # PRAGMA integrity_check (+0.10)
+        try:
+            cursor = conn.execute("PRAGMA integrity_check")
+            result = cursor.fetchone()[0]
+            if result == "ok":
+                score += 0.10
+        except Exception:
+            pass
+
+        # Exploit check
+        if "unified_orders" in tables and _get_row_count(conn, "unified_orders") == 0:
             score = min(score, 0.1)
 
         return max(0.01, min(0.99, score))

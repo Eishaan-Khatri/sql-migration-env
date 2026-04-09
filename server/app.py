@@ -61,35 +61,40 @@ async def root():
     return """<!DOCTYPE html>
 <html>
 <head>
-    <title>SQL Migration Agent — OpenEnv</title>
+    <title>SQL Migration Agent -- OpenEnv</title>
     <style>
         body { font-family: monospace; background: #0d1117; color: #e6edf3; padding: 40px; }
         h1 { color: #58a6ff; } h2 { color: #79c0ff; }
         .ok { color: #3fb950; } .endpoint { color: #d2a8ff; }
         pre { background: #161b22; padding: 12px; border-radius: 6px; }
         a { color: #58a6ff; }
+        .easy { color: #3fb950; } .medium { color: #d29922; } .hard { color: #f85149; }
     </style>
 </head>
 <body>
-    <h1>🗄️ SQL Schema Migration Agent</h1>
-    <p class="ok">✅ Server running — OpenEnv hackathon environment</p>
+    <h1>SQL Schema Migration Agent</h1>
+    <p class="ok">Server running -- OpenEnv hackathon environment (7 tasks)</p>
     <h2>API Endpoints</h2>
     <pre>
-<span class="endpoint">POST /reset</span>   — Start a new migration episode
-<span class="endpoint">POST /step</span>    — Execute a SQL action
-<span class="endpoint">GET  /state</span>   — Current environment state
-<span class="endpoint">GET  /tasks</span>   — List all 3 tasks
-<span class="endpoint">POST /grader</span>  — Run grader on all tasks
-<span class="endpoint">GET  /health</span>  — Health check
-<span class="endpoint">GET  /docs</span>    — Interactive API documentation
+<span class="endpoint">POST /reset</span>   -- Start a new migration episode
+<span class="endpoint">POST /step</span>    -- Execute a SQL action
+<span class="endpoint">GET  /state</span>   -- Current environment state
+<span class="endpoint">GET  /tasks</span>   -- List all 7 tasks
+<span class="endpoint">POST /grader</span>  -- Run grader on all tasks
+<span class="endpoint">GET  /health</span>  -- Health check
+<span class="endpoint">GET  /docs</span>    -- Interactive API documentation
     </pre>
-    <h2>Tasks</h2>
+    <h2>Tasks (2 Easy / 3 Medium / 2 Hard)</h2>
     <pre>
-1. column-restructure   (Easy)   — Merge first_name + last_name → full_name
-2. table-normalization  (Medium) — Normalize purchases → customers + orders + FK
-3. cascade-migration    (Hard)   — 4-table FK cascade, type coercion, orphan audit
+<span class="easy">1. column-restructure      (Easy)   -- Merge first_name + last_name -> full_name</span>
+<span class="easy">2. soft-delete-restoration  (Easy)   -- Restore deleted products from deletion_log</span>
+<span class="medium">3. table-normalization      (Medium) -- Normalize purchases -> customers + orders + FK</span>
+<span class="medium">4. schema-version-merge     (Medium) -- Merge v1/v2 product tables with coercion</span>
+<span class="medium">5. multi-entity-extraction  (Medium) -- 3NF decomposition with invalid data routing</span>
+<span class="hard">6. cascade-migration        (Hard)   -- 4-table FK cascade, type coercion, orphan audit</span>
+<span class="hard">7. dual-source-consolidation(Hard)   -- 6->4 table merge, cross-system email dedup</span>
     </pre>
-    <p><a href="/docs">📖 Open API Docs</a> | <a href="/tasks">📋 View Tasks</a> | <a href="/health">💚 Health Check</a></p>
+    <p><a href="/docs">Open API Docs</a> | <a href="/tasks">View Tasks</a> | <a href="/health">Health Check</a></p>
 </body>
 </html>"""
 
@@ -101,31 +106,27 @@ async def list_tasks() -> Dict[str, Any]:
 
     Returns JSON with task definitions and action schema for automated validation.
     """
+    # Import seeds to dynamically build task list
+    try:
+        from .. import seeds as _seeds
+    except ImportError:
+        import seeds as _seeds
+
+    task_list = []
+    for name, cfg in _seeds.TASKS.items():
+        task_list.append({
+            "name": name,
+            "description": cfg["description"],
+            "difficulty": cfg["difficulty"],
+            "max_steps": cfg.get("max_steps", 20),
+        })
+
     return {
-        "tasks": [
-            {
-                "name": "column-restructure",
-                "description": "Merge first_name and last_name into a single full_name column without data loss",
-                "difficulty": "easy",
-                "max_steps": 20,
-            },
-            {
-                "name": "table-normalization",
-                "description": "Decompose a flat purchases table into normalized customers and orders tables with FK",
-                "difficulty": "medium",
-                "max_steps": 20,
-            },
-            {
-                "name": "cascade-migration",
-                "description": "Multi-table FK cascade with type coercion, NULL handling, and orphan audit logging",
-                "difficulty": "hard",
-                "max_steps": 20,
-            },
-        ],
+        "tasks": task_list,
         "action_schema": {
-            "sql_command": "string — The SQL statement to execute",
-            "reasoning": "string — Explanation of the action (optional)",
-            "submit_final": "boolean — Set true when migration is complete (default: false)",
+            "sql_command": "string -- The SQL statement to execute",
+            "reasoning": "string -- Explanation of the action (optional)",
+            "submit_final": "boolean -- Set true when migration is complete (default: false)",
         },
     }
 
@@ -141,25 +142,29 @@ async def grade_task(
     Returns per-task grader scores after running the environment's internal scorer.
     """
     task_name = body.get("task_name", None)
-    tasks_to_grade = [task_name] if task_name else ["column-restructure", "table-normalization", "cascade-migration"]
+
+    try:
+        from .. import seeds as _seeds
+    except ImportError:
+        import seeds as _seeds
+
+    tasks_to_grade = [task_name] if task_name else list(_seeds.TASKS.keys())
 
     results = {}
     for t in tasks_to_grade:
         try:
             env = DbMigrationEnvironment(task_name=t)
             obs = env.reset()
-            # Return the initial score (before any agent action)
-            # This proves the grader works and returns values in [0.0, 1.0]
             results[t] = {
-                "initial_score": max(0.0, min(1.0, obs.migration_progress)),
+                "initial_score": obs.migration_progress,
                 "grader_functional": True,
-                "reward_range": [0.0, 1.0],
-                "max_steps": 20,
+                "reward_range": [0.01, 0.99],
+                "max_steps": _seeds.TASKS[t].get("max_steps", 20),
             }
             env.close()
         except Exception as e:
             results[t] = {
-                "initial_score": 0.0,
+                "initial_score": 0.01,
                 "grader_functional": False,
                 "error": str(e),
             }

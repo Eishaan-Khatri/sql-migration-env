@@ -71,7 +71,8 @@ class DbMigrationEnvironment(Environment):
             return ""
         try:
             cursor = self._conn.execute(
-                "SELECT sql FROM sqlite_master WHERE type='table' AND sql IS NOT NULL ORDER BY name"
+                "SELECT sql FROM sqlite_master WHERE type='table' "
+                "AND sql IS NOT NULL AND name NOT LIKE 'sqlite_%' ORDER BY name"
             )
             schemas = [row[0] for row in cursor.fetchall()]
             return ";\n\n".join(schemas) + ";" if schemas else ""
@@ -186,6 +187,17 @@ class DbMigrationEnvironment(Environment):
             self._conn.commit()
             rows_affected = cursor.rowcount
             execution_result = f"Success: {rows_affected} rows affected"
+        except sqlite3.Warning as e:
+            # Multi-statement attempt — agent tried to combine statements
+            execution_result = (
+                f"Error: SQLite requires one statement per step. "
+                f"Split your commands into separate steps. Original error: {e}"
+            )
+            action_error = "multi_statement"
+            try:
+                self._conn.rollback()
+            except Exception:
+                pass
         except Exception as e:
             # Never crash — feed the error back to the agent
             execution_result = str(e)
@@ -199,8 +211,9 @@ class DbMigrationEnvironment(Environment):
         # Compute scores
         current_score, step_reward = self._reconciler.compute_step_reward(self._conn)
 
-        # Episode termination: submit_final, max steps (20), OR perfect score
-        done = action.submit_final or self._step_count >= 20 or current_score >= 0.99
+        # Episode termination: submit_final, max steps, OR perfect score
+        task_max = self._task_config.get("max_steps", 20)
+        done = action.submit_final or self._step_count >= task_max or current_score >= 0.99
 
         # Update state
         self._state.step_count = self._step_count
