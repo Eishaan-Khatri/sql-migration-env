@@ -116,7 +116,7 @@ class DbMigrationEnvironment(Environment):
     def _is_read_query(self, sql: str) -> bool:
         """Check if SQL is a read-only query (SELECT or certain PRAGMAs)."""
         stripped = sql.strip().upper()
-        if stripped.startswith("SELECT"):
+        if stripped.startswith("SELECT") or stripped.startswith("WITH"):
             return True
         # PRAGMA table_info, foreign_key_list, etc. are read-only
         if stripped.startswith("PRAGMA") and "=" not in stripped:
@@ -318,7 +318,7 @@ class DbMigrationEnvironment(Environment):
 
         # --- A3: Dangerous SQL Blacklist ---
         sql_lower = sql_command.lower()
-        if "pragma" in sql_lower and "foreign_keys" in sql_lower and "off" in sql_lower:
+        if re.search(r"pragma\s+foreign_keys\s*=\s*(off|0)", sql_lower):
             execution_result = "Security Error: Disabling PRAGMA foreign_keys is strictly explicitly forbidden."
             action_error = "pragma_off_blocked"
         elif _DANGEROUS_PATTERNS.search(sql_command):

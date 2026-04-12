@@ -61,6 +61,11 @@ def _get_column_names(conn: sqlite3.Connection, table: str) -> Set[str]:
     return {col["name"] for col in _get_column_info(conn, table)}
 
 
+def _get_column_signatures(conn: sqlite3.Connection, table: str) -> Set[Tuple[str, str]]:
+    """Get (name, type) tuples for strict schema grading."""
+    return {(col["name"], col["type"]) for col in _get_column_info(conn, table)}
+
+
 def _get_row_count(conn: sqlite3.Connection, table: str) -> int:
     """Get row count. Returns 0 on error."""
     try:
@@ -95,12 +100,12 @@ def _has_foreign_key(conn: sqlite3.Connection, table: str, ref_table: str) -> bo
 
 
 def _count_foreign_keys(conn: sqlite3.Connection, table: str) -> int:
-    """Count all FK relationships for a table."""
+    """Count unique FK constraints for a table using the FK id."""
     try:
         cursor = conn.execute(f"PRAGMA foreign_key_list([{table}])")
         refs = set()
         for row in cursor.fetchall():
-            refs.add(row[2].lower())
+            refs.add(row[0])  # row[0] is the sequential ID of the foreign key constraint
         return len(refs)
     except Exception:
         return 0
@@ -199,6 +204,7 @@ class StateReconciler:
                 self._golden_table_data[table] = {
                     "columns": _get_column_info(self._golden_conn, table),
                     "col_names": _get_column_names(self._golden_conn, table),
+                    "col_signatures": _get_column_signatures(self._golden_conn, table),
                     "rows": _get_all_rows(self._golden_conn, table),
                     "row_count": _get_row_count(self._golden_conn, table),
                     "fk_count": _count_foreign_keys(self._golden_conn, table),
@@ -274,9 +280,9 @@ class StateReconciler:
             
             if table in agent_tables:
                 tables_found += 1
-                # Column name comparison
-                agent_cols = _get_column_names(conn, table)
-                golden_cols = golden_info["col_names"]
+                # Signature (name + type) comparison
+                agent_cols = _get_column_signatures(conn, table)
+                golden_cols = golden_info["col_signatures"]
                 if golden_cols:
                     col_overlap = len(agent_cols & golden_cols) / len(golden_cols)
                     total_col_match += col_overlap
@@ -329,7 +335,12 @@ class StateReconciler:
             conn.execute("PRAGMA foreign_keys = ON")
             cursor = conn.execute("PRAGMA integrity_check")
             result = cursor.fetchone()[0]
-            integrity_ok = (result == "ok")
+            
+            # Explicitly run foreign_key_check to catch orphaned rows
+            fk_cursor = conn.execute("PRAGMA foreign_key_check")
+            fk_violations = fk_cursor.fetchall()
+            
+            integrity_ok = (result == "ok" and len(fk_violations) == 0)
         except Exception:
             pass
         
