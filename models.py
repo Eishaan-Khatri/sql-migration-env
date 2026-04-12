@@ -104,7 +104,7 @@ class MigrationState(State):
     """
     State for the SQL Migration Environment.
 
-    Returned by the state() property. Contains episode metadata.
+    Returned by the state() method. Contains episode metadata.
 
     Inherits from State:
         episode_id: str — Unique episode identifier

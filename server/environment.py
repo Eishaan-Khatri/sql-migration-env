@@ -16,7 +16,6 @@ Architecture Fixes Applied:
 
 import re
 import sqlite3
-import threading
 import uuid
 import difflib
 from typing import Any, Dict, List, Optional
@@ -53,9 +52,7 @@ _TX_END = re.compile(r"^\s*(COMMIT|END|END\s+TRANSACTION|ROLLBACK)\s*;?\s*$", re
 _MAX_OPS = 500_000  # ~5 seconds on typical hardware
 
 
-class _TimeoutError(Exception):
-    """Raised when SQL execution exceeds the operation budget."""
-    pass
+# (Timeout handled via progress handler return value, no exception needed)
 
 
 class DbMigrationEnvironment(Environment):
@@ -142,8 +139,13 @@ class DbMigrationEnvironment(Environment):
             cursor = self._conn.execute(sql)
             return cursor, None
         except sqlite3.OperationalError as e:
-            if "interrupted" in str(e).lower() or ops_count[0] > _MAX_OPS:
+            err_str = str(e).lower()
+            if "interrupted" in err_str or ops_count[0] > _MAX_OPS:
                 return None, "Error: Query exceeded execution time limit (possible infinite loop). Simplify your query."
+            if "table" in err_str and "already exists" in err_str:
+                return None, f"Schema Error: {e}. You must DROP the old table first if replacing it."
+            if "has no column" in err_str:
+                return None, f"Schema Error: {e}. Check table columns."
             return None, str(e)
         except sqlite3.Warning as e:
             # Multi-statement fallback
@@ -152,13 +154,6 @@ class DbMigrationEnvironment(Environment):
                 return None, None
             except Exception as script_e:
                 return None, f"Error (Multi-Statement Fallback Failed): {script_e}. Original error: {e}"
-        except sqlite3.OperationalError as e:
-            err_str = str(e).lower()
-            if "table" in err_str and "already exists" in err_str:
-                return None, f"Schema Error: {e}. You must DROP the old table first if replacing it."
-            if "has no column" in err_str:
-                return None, f"Schema Error: {e}. Check table columns."
-            return None, str(e)
         except Exception as e:
             err_str = str(e).lower()
             if "values for" in err_str and "columns" in err_str:
@@ -227,7 +222,7 @@ class DbMigrationEnvironment(Environment):
             self._conn = None
 
         # Create fresh in-memory database
-        self._conn = sqlite3.connect(":memory:", isolation_level=None)
+        self._conn = sqlite3.connect(":memory:")
 
         # Performance PRAGMAs for Docker I/O
         self._conn.execute("PRAGMA journal_mode = MEMORY")
@@ -253,8 +248,9 @@ class DbMigrationEnvironment(Environment):
             max_steps=self._max_steps,  # A6
         )
 
-        # Compute initial score
+        # Compute initial score and sync grader baseline
         initial_score = self._reconciler.score(self._conn)
+        self._reconciler._last_score = initial_score  # Prevent inflated first-step reward
         self._state.migration_progress = initial_score
 
         current_ddl = self._get_current_schema()
