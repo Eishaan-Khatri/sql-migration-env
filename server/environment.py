@@ -4,11 +4,21 @@ SQL Migration Environment Server Implementation.
 This is the core environment that wraps SQLite and exposes it via the OpenEnv
 Environment interface. Each WebSocket session gets its own environment instance
 with an isolated in-memory database.
+
+Architecture Fixes Applied:
+- A1: SELECT queries return actual data rows (not just "rows affected")
+- A2: SQL execution timeout via progress handler (prevents infinite CTEs)
+- A3: Dangerous SQL blacklist (ATTACH, DETACH, LOAD_EXTENSION, writable_schema)
+- A4: Transaction awareness (respects BEGIN/COMMIT/ROLLBACK from agent)
+- A5: Trajectory logging (full SQL history in metadata on episode end)
+- A6: Per-task max_steps from seeds registry
 """
 
+import re
 import sqlite3
+import threading
 import uuid
-from typing import Any, Optional
+from typing import Any, Dict, List, Optional
 
 # Support both in-repo and standalone imports
 try:
@@ -25,6 +35,26 @@ try:
     from .. import seeds
 except ImportError:
     import seeds
+
+
+# --- A3: Dangerous SQL Blacklist ---
+_DANGEROUS_PATTERNS = re.compile(
+    r"\b(ATTACH\s+DATABASE|DETACH\s+DATABASE|LOAD_EXTENSION)\b"
+    r"|PRAGMA\s+writable_schema",
+    re.IGNORECASE,
+)
+
+# --- A4: Transaction control keywords ---
+_TX_BEGIN = re.compile(r"^\s*(BEGIN|BEGIN\s+TRANSACTION|BEGIN\s+DEFERRED|BEGIN\s+IMMEDIATE|BEGIN\s+EXCLUSIVE)\s*;?\s*$", re.IGNORECASE)
+_TX_END = re.compile(r"^\s*(COMMIT|END|END\s+TRANSACTION|ROLLBACK)\s*;?\s*$", re.IGNORECASE)
+
+# --- A2: Maximum SQLite operations before timeout ---
+_MAX_OPS = 500_000  # ~5 seconds on typical hardware
+
+
+class _TimeoutError(Exception):
+    """Raised when SQL execution exceeds the operation budget."""
+    pass
 
 
 class DbMigrationEnvironment(Environment):
@@ -44,7 +74,7 @@ class DbMigrationEnvironment(Environment):
         Initialize the migration environment.
 
         Args:
-            task_name: One of "column-restructure", "table-normalization", "cascade-migration"
+            task_name: One of the registered task names in seeds.TASKS
         """
         super().__init__()
 
@@ -59,14 +89,17 @@ class DbMigrationEnvironment(Environment):
         self._conn: Optional[sqlite3.Connection] = None
         self._reconciler: Optional[StateReconciler] = None
         self._step_count = 0
+        self._trajectory: List[Dict[str, Any]] = []  # A5
+        self._in_explicit_tx = False  # A4
+        self._max_steps = self._task_config.get("max_steps", 20)  # A6
         self._state = MigrationState(
             task_name=task_name,
             migration_progress=0.0,
-            max_steps=20,
+            max_steps=self._max_steps,  # A6
         )
 
     def _get_current_schema(self) -> str:
-        """Get current database schema as DDL string."""
+        """Get current database schema as DDL string, filtering internal tables."""
         if self._conn is None:
             return ""
         try:
@@ -78,6 +111,75 @@ class DbMigrationEnvironment(Environment):
             return ";\n\n".join(schemas) + ";" if schemas else ""
         except Exception:
             return ""
+
+    def _is_read_query(self, sql: str) -> bool:
+        """Check if SQL is a read-only query (SELECT or certain PRAGMAs)."""
+        stripped = sql.strip().upper()
+        if stripped.startswith("SELECT"):
+            return True
+        # PRAGMA table_info, foreign_key_list, etc. are read-only
+        if stripped.startswith("PRAGMA") and "=" not in stripped:
+            return True
+        return False
+
+    def _execute_with_timeout(self, sql: str) -> tuple:
+        """
+        Execute SQL with a progress-handler-based timeout.
+
+        Returns: (cursor_or_None, error_string_or_None)
+        """
+        ops_count = [0]
+
+        def _progress_callback():
+            ops_count[0] += 1
+            if ops_count[0] > _MAX_OPS:
+                return 1  # Non-zero = abort
+            return 0
+
+        self._conn.set_progress_handler(_progress_callback, 1000)
+        try:
+            cursor = self._conn.execute(sql)
+            return cursor, None
+        except sqlite3.OperationalError as e:
+            if "interrupted" in str(e).lower() or ops_count[0] > _MAX_OPS:
+                return None, "Error: Query exceeded execution time limit (possible infinite loop). Simplify your query."
+            return None, str(e)
+        except sqlite3.Warning as e:
+            return None, (
+                f"Error: SQLite requires one statement per step. "
+                f"Split your commands into separate steps. Original error: {e}"
+            )
+        except Exception as e:
+            return None, str(e)
+        finally:
+            self._conn.set_progress_handler(None, 0)
+
+    def _format_query_results(self, cursor) -> str:
+        """Format SELECT query results as a readable table string."""
+        try:
+            rows = cursor.fetchall()
+            if not rows:
+                return "Query returned 0 rows."
+
+            # Get column names
+            col_names = [desc[0] for desc in cursor.description] if cursor.description else []
+
+            # Cap at 50 rows
+            truncated = len(rows) > 50
+            display_rows = rows[:50]
+
+            # Build output
+            header = " | ".join(col_names) if col_names else "Results"
+            lines = [header, "-" * len(header)]
+            for row in display_rows:
+                lines.append(" | ".join(str(v) for v in row))
+            if truncated:
+                lines.append(f"... ({len(rows) - 50} more rows truncated)")
+            lines.append(f"({len(rows)} rows total)")
+
+            return "\n".join(lines)
+        except Exception:
+            return "Query executed successfully."
 
     def reset(
         self,
@@ -101,6 +203,7 @@ class DbMigrationEnvironment(Environment):
         if task_name != self.task_name and task_name in seeds.TASKS:
             self.task_name = task_name
             self._task_config = seeds.TASKS[task_name]
+            self._max_steps = self._task_config.get("max_steps", 20)
 
         # Clean up previous connection
         if self._conn is not None:
@@ -122,15 +225,20 @@ class DbMigrationEnvironment(Environment):
         # Initialize grader
         self._reconciler = StateReconciler(self.task_name)
 
-        # Reset counters
+        # Reset counters and trajectory
         self._step_count = 0
+        self._trajectory = []  # A5
+        self._in_explicit_tx = False  # A4
         self._state = MigrationState(
             episode_id=episode_id or str(uuid.uuid4()),
             step_count=0,
             task_name=self.task_name,
             migration_progress=0.0,
-            max_steps=20,
+            max_steps=self._max_steps,  # A6
         )
+
+        # Compute initial score
+        initial_score = self._reconciler.score(self._conn)
 
         return MigrationObservation(
             done=False,
@@ -139,7 +247,7 @@ class DbMigrationEnvironment(Environment):
             target_schema_sql=self._task_config["target_ddl"],
             last_execution_result="Environment initialized. Ready for migration.",
             step_number=0,
-            migration_progress=0.0,
+            migration_progress=initial_score,
             task_name=self.task_name,
             metadata={"status": "ready"},
         )
@@ -155,7 +263,7 @@ class DbMigrationEnvironment(Environment):
 
         Args:
             action: MigrationAction with sql_command, reasoning, and submit_final
-            timeout_s: Unused
+            timeout_s: Unused (we use progress handler instead)
             **kwargs: Additional parameters
 
         Returns:
@@ -178,42 +286,87 @@ class DbMigrationEnvironment(Environment):
             )
 
         self._step_count += 1
+        sql_command = action.sql_command.strip()
 
-        # Execute the SQL command
-        execution_result = ""
-        action_error = None
-        try:
-            cursor = self._conn.execute(action.sql_command)
-            self._conn.commit()
-            rows_affected = cursor.rowcount
-            execution_result = f"Success: {rows_affected} rows affected"
-        except sqlite3.Warning as e:
-            # Multi-statement attempt — agent tried to combine statements
+        # --- A3: Dangerous SQL Blacklist ---
+        if _DANGEROUS_PATTERNS.search(sql_command):
             execution_result = (
-                f"Error: SQLite requires one statement per step. "
-                f"Split your commands into separate steps. Original error: {e}"
+                "Error: This SQL command is not allowed for security reasons. "
+                "ATTACH DATABASE, DETACH DATABASE, LOAD_EXTENSION, and "
+                "PRAGMA writable_schema are blocked."
             )
-            action_error = "multi_statement"
-            try:
-                self._conn.rollback()
-            except Exception:
-                pass
-        except Exception as e:
-            # Never crash — feed the error back to the agent
-            execution_result = str(e)
-            action_error = str(e)
-            # Rollback failed transaction
-            try:
-                self._conn.rollback()
-            except Exception:
-                pass
+            action_error = "blocked_command"
+        else:
+            # --- A4: Transaction Awareness ---
+            execution_result = ""
+            action_error = None
+
+            if _TX_BEGIN.match(sql_command):
+                # Agent wants to start a transaction
+                try:
+                    self._conn.execute("BEGIN")
+                    self._in_explicit_tx = True
+                    execution_result = "Success: Transaction started."
+                except Exception as e:
+                    execution_result = str(e)
+                    action_error = str(e)
+            elif _TX_END.match(sql_command):
+                # Agent wants to commit or rollback
+                try:
+                    if sql_command.strip().upper().startswith("ROLLBACK"):
+                        self._conn.rollback()
+                        execution_result = "Success: Transaction rolled back."
+                    else:
+                        self._conn.commit()
+                        execution_result = "Success: Transaction committed."
+                    self._in_explicit_tx = False
+                except Exception as e:
+                    execution_result = str(e)
+                    action_error = str(e)
+                    self._in_explicit_tx = False
+            else:
+                # --- Normal SQL execution with timeout (A1, A2) ---
+                cursor, error = self._execute_with_timeout(sql_command)
+
+                if error:
+                    execution_result = error
+                    action_error = error
+                    # Rollback failed transaction
+                    try:
+                        if not self._in_explicit_tx:
+                            self._conn.rollback()
+                    except Exception:
+                        pass
+                else:
+                    # --- A1: SELECT result passthrough ---
+                    if self._is_read_query(sql_command):
+                        execution_result = self._format_query_results(cursor)
+                    else:
+                        rows_affected = cursor.rowcount
+                        execution_result = f"Success: {rows_affected} rows affected"
+                        # Only auto-commit if not in explicit transaction (A4)
+                        if not self._in_explicit_tx:
+                            try:
+                                self._conn.commit()
+                            except Exception:
+                                pass
 
         # Compute scores
         current_score, step_reward = self._reconciler.compute_step_reward(self._conn)
 
         # Episode termination: submit_final, max steps, OR perfect score
-        task_max = self._task_config.get("max_steps", 20)
-        done = action.submit_final or self._step_count >= task_max or current_score >= 0.99
+        done = action.submit_final or self._step_count >= self._max_steps or current_score >= 0.99
+
+        # --- A5: Trajectory logging ---
+        self._trajectory.append({
+            "step": self._step_count,
+            "sql": action.sql_command,
+            "reasoning": action.reasoning,
+            "result": execution_result[:200],  # Truncate for storage
+            "score": current_score,
+            "reward": step_reward,
+            "error": action_error,
+        })
 
         # Update state
         self._state.step_count = self._step_count
@@ -227,6 +380,9 @@ class DbMigrationEnvironment(Environment):
         }
         if action_error:
             meta["error"] = action_error
+        # Include full trajectory on episode end
+        if done:
+            meta["trajectory"] = self._trajectory
 
         return MigrationObservation(
             done=done,

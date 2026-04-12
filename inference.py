@@ -2,8 +2,17 @@
 """
 Baseline Inference Script for SQL Migration Environment.
 
-Runs all 3 migration tasks sequentially using an LLM via OpenAI-compatible API.
+Runs all 7 migration tasks sequentially using an LLM via OpenAI-compatible API.
 Outputs structured [START]/[STEP]/[END] format for automated evaluation.
+
+Fixes Applied:
+- D1: Task description injected into system prompt
+- D2: Hardcoded system prompt traps removed (no more audit_log/INTEGER traps)
+- D3: Data discovery rule added (agent runs SELECT before DDL)
+- D4: Submit guard added (agent must verify before submitting)
+- D5: Context window bloat fixed (schema not repeated every step)
+- D6: Parse error counter tracks consecutive errors only
+- D7: response_format JSON mode with fallback
 
 Usage:
     python inference.py
@@ -16,6 +25,7 @@ Environment Variables:
 
 import json
 import os
+import re
 import sys
 import time
 import traceback
@@ -23,29 +33,31 @@ import traceback
 # Server URL for the environment
 ENV_BASE_URL = os.getenv("ENV_BASE_URL", "http://localhost:7860")
 
-# LLM Configuration — defaults required for API_BASE_URL and MODEL_NAME only
+# LLM Configuration
 API_BASE_URL = os.getenv("API_BASE_URL", "https://router.huggingface.co/v1")
 MODEL_NAME = os.getenv("MODEL_NAME", "Qwen/Qwen2.5-72B-Instruct")
-HF_TOKEN = os.getenv("HF_TOKEN")  # No default — must be set by user
-# Also support OPENAI_API_KEY as primary (per spec) and API_KEY as alias
+HF_TOKEN = os.getenv("HF_TOKEN")
 API_KEY = os.getenv("OPENAI_API_KEY") or HF_TOKEN or os.getenv("API_KEY")
 
+# --- D2: Cleaned system prompt — no hardcoded table names or type traps ---
 SYSTEM_PROMPT_TEMPLATE = """You are an autonomous SQLite database migration engine. You receive the current schema and a target schema. Write SQL to transform the current state to the target state without losing row data.
 
-CRITICAL — SQLite-specific rules (violations cause immediate errors):
-1. SQLite does NOT support ALTER TABLE ADD CONSTRAINT — never use it.
-2. SQLite does NOT support ALTER TABLE ALTER COLUMN — never use it.
-3. SQLite does NOT support ALTER TABLE ADD PRIMARY KEY — never use it.
-4. SQLite does NOT support ADD COLUMN with non-constant DEFAULT — add column as NULL then UPDATE.
-5. To change column types, add NOT NULL, or add FKs: CREATE new table with correct schema, INSERT INTO new SELECT from old, DROP old, RENAME new to original name.
-6. Apostrophes in data (e.g., O'Brien, O'Neill) are present — always use parameterized patterns or escape with ''.
-7. For table normalization: create new tables first, INSERT INTO ... SELECT, then drop old tables.
-8. For ORPHANED FK rows: before inserting into a FK-constrained table, DELETE or INSERT INTO audit_log any rows whose FK reference does not exist in the parent table. Example: DELETE FROM assets WHERE employee_id NOT IN (SELECT id FROM employees).
-9. For TEXT salary columns like '$90000': use CAST(REPLACE(REPLACE(salary, '$', ''), ',', '') AS INTEGER) to convert.
-10. Execute exactly ONE SQL statement per step.
-11. When migration is complete (schemas match, data preserved), set submit_final to true IMMEDIATELY.
+TASK OBJECTIVE:
+{task_description}
 
-TARGET SCHEMA (fixed — achieve this exactly):
+CRITICAL SQLite-specific rules (violations cause immediate errors):
+1. SQLite does NOT support ALTER TABLE ADD CONSTRAINT, ALTER COLUMN, or ADD PRIMARY KEY.
+2. To change column types, add NOT NULL, or add FKs: CREATE new table, INSERT INTO new SELECT FROM old, DROP old, RENAME new.
+3. Apostrophes in data (O'Brien, O'Neill) are present — escape with '' in string literals.
+4. Execute exactly ONE SQL statement per step.
+5. For table normalization: create new tables first, INSERT INTO ... SELECT, then drop old tables.
+6. For orphaned FK rows: check the TARGET SCHEMA for the correct anomaly/issues table name (it varies per task). Log invalid records there before dropping.
+7. For text currency columns like '$90,000' or '$1,234.56': strip '$' and ',' then cast to the type in the target schema (INTEGER for whole numbers, REAL for decimals).
+8. IMPORTANT: Before writing any DDL, execute SELECT * FROM tablename LIMIT 5 for each source table to inspect the actual data format and identify edge cases like empty strings, leading whitespace, NULL values, and special characters.
+9. Do NOT set submit_final to true until you have run SELECT COUNT(*) on your target tables and verified the counts and data match what the task requires.
+10. When migration is complete and verified, set submit_final to true.
+
+TARGET SCHEMA (achieve this exactly):
 {target_ddl}
 
 Respond ONLY with valid JSON — no markdown, no code blocks, no text outside the object:
@@ -60,15 +72,12 @@ ALL_TASKS = [
     "cascade-migration",
     "dual-source-consolidation",
 ]
-MAX_STEPS = 20  # Global fallback; per-task limits override this
-MAX_PARSE_ERRORS = 5  # Higher tolerance for thinking models (Qwen3, DeepSeek-R1)
-
-# Auto-submit threshold: if migration_progress >= this, force submit_final
+MAX_PARSE_ERRORS = 5  # Consecutive parse errors before giving up
 AUTO_SUBMIT_THRESHOLD = 0.95
 
 
 def call_llm(messages: list, timeout: int = 90) -> str:
-    """Call the LLM API and return the response content."""
+    """Call the LLM API with JSON mode fallback."""
     from openai import OpenAI
 
     client = OpenAI(
@@ -77,11 +86,25 @@ def call_llm(messages: list, timeout: int = 90) -> str:
         timeout=timeout,
     )
 
+    # --- D7: Try JSON mode first, fallback to plain ---
     try:
         response = client.chat.completions.create(
             model=MODEL_NAME,
             messages=messages,
-            temperature=0.0,  # Deterministic output — eliminates variance
+            temperature=0.0,
+            max_tokens=1024,
+            response_format={"type": "json_object"},
+        )
+        return response.choices[0].message.content.strip()
+    except Exception:
+        pass
+
+    # Fallback: plain text mode
+    try:
+        response = client.chat.completions.create(
+            model=MODEL_NAME,
+            messages=messages,
+            temperature=0.0,
             max_tokens=1024,
         )
         return response.choices[0].message.content.strip()
@@ -93,18 +116,13 @@ def parse_action(raw_text: str) -> dict:
     """
     Parse LLM output into an action dict.
 
-    Handles: raw JSON, markdown-wrapped JSON (```json ... ```),
-    <think>...</think> reasoning tokens (Qwen3, DeepSeek-R1),
-    and common LLM mistakes like trailing commas or extra text.
+    Handles: raw JSON, markdown-wrapped JSON, <think>...</think> blocks,
+    escaped quotes in SQL, and truncated output recovery.
     """
-    import re
     text = raw_text.strip()
 
-    # Strip <think>...</think> blocks emitted by reasoning models (Qwen3, R1)
-    # Must do this BEFORE any other processing
+    # Strip <think>...</think> blocks (Qwen3, DeepSeek-R1)
     text = re.sub(r"<think>.*?</think>", "", text, flags=re.DOTALL).strip()
-
-    # Also strip partial/unclosed think blocks (truncated output)
     text = re.sub(r"<think>.*$", "", text, flags=re.DOTALL).strip()
 
     # Strip markdown code block fences
@@ -119,7 +137,7 @@ def parse_action(raw_text: str) -> dict:
     except json.JSONDecodeError:
         pass
 
-    # Try to find JSON object in the text (handles preamble text or extra trailing content)
+    # Try to find JSON object in the text
     start = text.find("{")
     end = text.rfind("}") + 1
     if start >= 0 and end > start:
@@ -128,11 +146,14 @@ def parse_action(raw_text: str) -> dict:
         except json.JSONDecodeError:
             pass
 
-    # Last resort: try to extract just sql_command if JSON is truncated
-    sql_match = re.search(r'"sql_command"\s*:\s*"([^"]+)"', text)
+    # --- D6: Improved regex that handles escaped quotes ---
+    sql_match = re.search(r'"sql_command"\s*:\s*"((?:[^"\\]|\\.)*)"', text)
     if sql_match:
+        sql = sql_match.group(1)
+        # Unescape JSON string escapes
+        sql = sql.replace('\\"', '"').replace("\\n", "\n").replace("\\\\", "\\")
         return {
-            "sql_command": sql_match.group(1),
+            "sql_command": sql,
             "reasoning": "auto-extracted from malformed response",
             "submit_final": False,
         }
@@ -143,49 +164,47 @@ def parse_action(raw_text: str) -> dict:
 def run_task_local(task_name: str) -> dict:
     """
     Run a single task using a local environment instance (no server needed).
-
-    This is the primary mode — avoids HTTP overhead and works inside Docker.
     """
-    # Import environment directly
     sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
     from server.environment import DbMigrationEnvironment
     from models import MigrationAction
     import seeds
 
     env = DbMigrationEnvironment(task_name=task_name)
-
-    # Use task-specific step budget (defaults to global MAX_STEPS)
-    task_max_steps = seeds.TASKS.get(task_name, {}).get("max_steps", MAX_STEPS)
+    task_config = seeds.TASKS[task_name]
+    task_max_steps = task_config.get("max_steps", 20)
 
     print(f"[START] task={task_name} env=sql-migration-agent model={MODEL_NAME}", flush=True)
 
     obs = env.reset()
 
-    # Build task-specific system prompt with target DDL baked in (sent ONCE)
-    task_system_prompt = SYSTEM_PROMPT_TEMPLATE.format(target_ddl=obs.target_schema_sql)
+    # --- D1: Inject task description into system prompt ---
+    task_system_prompt = SYSTEM_PROMPT_TEMPLATE.format(
+        task_description=task_config["description"],
+        target_ddl=obs.target_schema_sql,
+    )
     history = [{"role": "system", "content": task_system_prompt}]
 
-    # Initial observation — only current schema (target already in system prompt)
+    # Initial observation
     initial_msg = (
         f"CURRENT DATABASE SCHEMA:\n{obs.current_schema_sql}\n\n"
         f"Status: {obs.last_execution_result}\n"
         f"Migration progress: {obs.migration_progress:.2f}\n\n"
-        f"Write your first SQL command to begin the migration."
+        f"Start by inspecting the source data with SELECT queries, then begin the migration."
     )
     history.append({"role": "user", "content": initial_msg})
 
     rewards_list = []
-    parse_errors = 0
+    consecutive_parse_errors = 0  # D6: Track consecutive only
     final_score = 0.0
     steps_taken = 0
     done = False
-    peak_score = 0.0  # Track the highest score we've reached
 
     for step in range(task_max_steps):
         if done:
             break
 
-        # Context truncation: system prompt + last 10 messages (5 pairs)
+        # --- D5: Context window fix — only keep last 10 messages + system ---
         messages = [history[0]] + history[-10:]
 
         try:
@@ -199,21 +218,20 @@ def run_task_local(task_name: str) -> dict:
         # Parse the action
         try:
             action_dict = parse_action(raw_response)
-        except ValueError as e:
-            parse_errors += 1
+            consecutive_parse_errors = 0  # D6: Reset on success
+        except ValueError:
+            consecutive_parse_errors += 1
             print(f"[STEP] step={step+1} action=PARSE_ERROR reward=0.00 done=false error=parse_error", flush=True)
-            if parse_errors >= MAX_PARSE_ERRORS:
-                print(f"[STEP] step={step+1} action=MAX_PARSE_ERRORS reward=0.00 done=true error=too_many_parse_errors", flush=True)
+            if consecutive_parse_errors >= MAX_PARSE_ERRORS:
+                print(f"[STEP] step={step+1} action=MAX_PARSE_ERRORS reward=0.00 done=true error=too_many_consecutive_parse_errors", flush=True)
                 done = True
                 break
             history.append({"role": "assistant", "content": raw_response})
             history.append({
                 "role": "user",
-                "content": "ERROR: Your response was not valid JSON. Respond ONLY with: {\"sql_command\": \"...\", \"reasoning\": \"...\", \"submit_final\": false}",
+                "content": 'ERROR: Your response was not valid JSON. Respond ONLY with: {"sql_command": "...", "reasoning": "...", "submit_final": false}',
             })
             continue
-
-        parse_errors = 0
 
         # Build the MigrationAction
         try:
@@ -234,15 +252,9 @@ def run_task_local(task_name: str) -> dict:
         final_score = obs.migration_progress
         done = obs.done
 
-        # Track peak score
-        if final_score > peak_score:
-            peak_score = final_score
-
-        # AUTO-SUBMIT: If we just reached a near-perfect score, force submit
-        # This prevents the LLM from continuing to send queries and regressing
+        # AUTO-SUBMIT: If we reached near-perfect score, force submit
         if final_score >= AUTO_SUBMIT_THRESHOLD and not done:
             done = True
-            # Submit a final no-op to lock in the score
             submit_action = MigrationAction(
                 sql_command="SELECT 1",
                 reasoning="Migration complete — auto-submitting",
@@ -251,15 +263,13 @@ def run_task_local(task_name: str) -> dict:
             obs = env.step(submit_action)
             final_score = obs.migration_progress
 
-        # Abbreviate SQL for logging
+        # Log
         sql_abbrev = action.sql_command[:50].replace("\n", " ")
         if len(action.sql_command) > 50:
             sql_abbrev += "..."
-
         error_str = obs.metadata.get("error", "null") if obs.metadata else "null"
         if error_str != "null":
             error_str = error_str[:80]
-
         print(
             f"[STEP] step={steps_taken} action={sql_abbrev} "
             f"reward={step_reward:.2f} done={'true' if done else 'false'} "
@@ -270,19 +280,17 @@ def run_task_local(task_name: str) -> dict:
         # Add to conversation history
         history.append({"role": "assistant", "content": json.dumps(action_dict)})
 
-        # Lean feedback — target is already in the system prompt, no need to repeat
+        # --- D5: Lean feedback — NO schema repetition ---
         feedback_msg = (
-            f"EXECUTION RESULT: {obs.last_execution_result}\n\n"
-            f"CURRENT SCHEMA:\n{obs.current_schema_sql}\n\n"
+            f"EXECUTION RESULT: {obs.last_execution_result}\n"
             f"Progress: {obs.migration_progress:.2f}"
         )
         if done:
             feedback_msg += "\n\nEpisode complete."
         elif obs.migration_progress >= 0.9:
             feedback_msg += (
-                "\n\nMigration is nearly complete! Compare the current schema "
-                "carefully to the target schema. If they match and data is "
-                "preserved, set submit_final to true in your next response."
+                "\n\nMigration is nearly complete! Run SELECT COUNT(*) on each table "
+                "and compare to your expectations. If everything matches, set submit_final to true."
             )
         else:
             feedback_msg += "\n\nContinue the migration. Write your next SQL command."
@@ -309,7 +317,7 @@ def run_task_local(task_name: str) -> dict:
 
 
 def main():
-    """Run all 3 tasks sequentially."""
+    """Run all 7 tasks sequentially."""
     if not API_KEY:
         print("WARNING: No API key found. Set HF_TOKEN or API_KEY.", file=sys.stderr)
         sys.exit(1)

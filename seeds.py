@@ -679,56 +679,464 @@ def seed_task7(conn: sqlite3.Connection) -> None:
 
 
 # =============================================================================
+# Golden Migration Functions
+# =============================================================================
+# These produce the CORRECT expected database state from any seed data.
+# Used by the dynamic grader to compare against the agent's output.
+# If seed data changes, the golden DB auto-updates — no hardcoded literals.
+
+
+def golden_task1(conn: sqlite3.Connection) -> None:
+    """Golden migration for Task 1: Column Restructure."""
+    conn.execute("CREATE TABLE users_new (id INTEGER PRIMARY KEY, full_name TEXT NOT NULL)")
+    conn.execute(
+        "INSERT INTO users_new (id, full_name) "
+        "SELECT id, first_name || ' ' || last_name FROM users"
+    )
+    conn.execute("DROP TABLE users")
+    conn.execute("ALTER TABLE users_new RENAME TO users")
+    conn.commit()
+
+
+def golden_task2(conn: sqlite3.Connection) -> None:
+    """Golden migration for Task 2: Table Normalization."""
+    conn.execute("PRAGMA foreign_keys = OFF")
+    conn.execute(
+        "CREATE TABLE customers ("
+        "id INTEGER PRIMARY KEY, name TEXT NOT NULL, email TEXT NOT NULL UNIQUE)"
+    )
+    conn.execute(
+        "INSERT INTO customers (name, email) "
+        "SELECT DISTINCT customer_name, customer_email FROM purchases"
+    )
+    conn.execute(
+        "CREATE TABLE orders ("
+        "id INTEGER PRIMARY KEY, customer_id INTEGER NOT NULL, "
+        "item_name TEXT NOT NULL, price INTEGER NOT NULL, "
+        "FOREIGN KEY (customer_id) REFERENCES customers(id))"
+    )
+    conn.execute(
+        "INSERT INTO orders (customer_id, item_name, price) "
+        "SELECT c.id, p.item_name, p.price "
+        "FROM purchases p JOIN customers c ON p.customer_email = c.email"
+    )
+    conn.execute("DROP TABLE purchases")
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.commit()
+
+
+def golden_task3(conn: sqlite3.Connection) -> None:
+    """Golden migration for Task 3: Cascade Migration."""
+    conn.execute("PRAGMA foreign_keys = OFF")
+    # Create audit_log
+    conn.execute(
+        "CREATE TABLE audit_log (id INTEGER PRIMARY KEY, source_table TEXT NOT NULL, "
+        "original_row_json TEXT NOT NULL, reason TEXT NOT NULL)"
+    )
+    # Log orphaned assets
+    conn.execute(
+        "INSERT INTO audit_log (source_table, original_row_json, reason) "
+        "SELECT 'assets', '{\"id\":' || id || ',\"employee_id\":' || employee_id || '}', 'orphaned_record' "
+        "FROM assets WHERE employee_id NOT IN (SELECT id FROM employees)"
+    )
+    # Log NULL salary employees
+    conn.execute(
+        "INSERT INTO audit_log (source_table, original_row_json, reason) "
+        "SELECT 'employees', '{\"id\":' || id || ',\"name\":\"' || name || '\"}', 'null_salary' "
+        "FROM employees WHERE salary IS NULL"
+    )
+    # Rebuild companies
+    conn.execute("CREATE TABLE companies_new (id INTEGER PRIMARY KEY, name TEXT NOT NULL)")
+    conn.execute("INSERT INTO companies_new SELECT id, name FROM companies")
+    conn.execute("DROP TABLE companies")
+    conn.execute("ALTER TABLE companies_new RENAME TO companies")
+    # Rebuild departments
+    conn.execute(
+        "CREATE TABLE departments_new (id INTEGER PRIMARY KEY, company_id INTEGER NOT NULL, "
+        "name TEXT NOT NULL, FOREIGN KEY (company_id) REFERENCES companies(id))"
+    )
+    conn.execute("INSERT INTO departments_new SELECT id, company_id, name FROM departments")
+    conn.execute("DROP TABLE departments")
+    conn.execute("ALTER TABLE departments_new RENAME TO departments")
+    # Rebuild employees (remove NULL salary, coerce TEXT to INT)
+    conn.execute(
+        "CREATE TABLE employees_new (id INTEGER PRIMARY KEY, department_id INTEGER NOT NULL, "
+        "name TEXT NOT NULL, salary INTEGER NOT NULL, "
+        "FOREIGN KEY (department_id) REFERENCES departments(id))"
+    )
+    conn.execute(
+        "INSERT INTO employees_new (id, department_id, name, salary) "
+        "SELECT id, department_id, name, "
+        "CAST(REPLACE(REPLACE(salary, '$', ''), ',', '') AS INTEGER) "
+        "FROM employees WHERE salary IS NOT NULL"
+    )
+    conn.execute("DROP TABLE employees")
+    conn.execute("ALTER TABLE employees_new RENAME TO employees")
+    # Rebuild assets (remove orphans)
+    conn.execute(
+        "CREATE TABLE assets_new (id INTEGER PRIMARY KEY, employee_id INTEGER NOT NULL, "
+        "description TEXT NOT NULL, FOREIGN KEY (employee_id) REFERENCES employees(id))"
+    )
+    conn.execute(
+        "INSERT INTO assets_new SELECT id, employee_id, description FROM assets "
+        "WHERE employee_id IN (SELECT id FROM employees)"
+    )
+    conn.execute("DROP TABLE assets")
+    conn.execute("ALTER TABLE assets_new RENAME TO assets")
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.commit()
+
+
+def golden_task4(conn: sqlite3.Connection) -> None:
+    """Golden migration for Task 4: Soft-Delete Restoration."""
+    conn.execute("PRAGMA foreign_keys = OFF")
+    # Create new table with extra columns
+    conn.execute(
+        "CREATE TABLE products_new (id INTEGER PRIMARY KEY, name TEXT NOT NULL, "
+        "price REAL NOT NULL, stock INTEGER NOT NULL, "
+        "is_deleted INTEGER NOT NULL DEFAULT 0, deleted_at TEXT)"
+    )
+    # Copy existing products as active
+    conn.execute(
+        "INSERT INTO products_new (id, name, price, stock, is_deleted, deleted_at) "
+        "SELECT id, name, price, stock, 0, NULL FROM products"
+    )
+    # Restore deleted products from log
+    conn.execute(
+        "INSERT INTO products_new (id, name, price, stock, is_deleted, deleted_at) "
+        "SELECT product_id, product_name, product_price, product_stock, 1, deleted_at "
+        "FROM deletion_log"
+    )
+    conn.execute("DROP TABLE products")
+    conn.execute("ALTER TABLE products_new RENAME TO products")
+    conn.execute("DROP TABLE deletion_log")
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.commit()
+
+
+def golden_task5(conn: sqlite3.Connection) -> None:
+    """Golden migration for Task 5: Schema Version Merge."""
+    conn.execute("PRAGMA foreign_keys = OFF")
+    conn.execute(
+        "CREATE TABLE products (id INTEGER PRIMARY KEY, name TEXT NOT NULL, "
+        "price REAL NOT NULL, category TEXT, supplier TEXT, brand TEXT, "
+        "sku TEXT, source TEXT NOT NULL)"
+    )
+    # Insert v1-only rows
+    conn.execute(
+        "INSERT INTO products (id, name, price, category, supplier, brand, sku, source) "
+        "SELECT id, name, CAST(REPLACE(REPLACE(price, '$', ''), ',', '') AS REAL), "
+        "category, supplier, NULL, NULL, 'v1' "
+        "FROM products_v1 WHERE id NOT IN (SELECT id FROM products_v2)"
+    )
+    # Insert v2-only rows
+    conn.execute(
+        "INSERT INTO products (id, name, price, category, supplier, brand, sku, source) "
+        "SELECT id, name, unit_cost, category, NULL, brand, sku, 'v2' "
+        "FROM products_v2 WHERE id NOT IN (SELECT id FROM products_v1)"
+    )
+    # Insert conflict rows (v2 wins for name/price)
+    conn.execute(
+        "INSERT INTO products (id, name, price, category, supplier, brand, sku, source) "
+        "SELECT v2.id, v2.name, v2.unit_cost, v2.category, v1.supplier, v2.brand, v2.sku, 'both' "
+        "FROM products_v2 v2 JOIN products_v1 v1 ON v2.id = v1.id"
+    )
+    conn.execute("DROP TABLE products_v1")
+    conn.execute("DROP TABLE products_v2")
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.commit()
+
+
+def golden_task6(conn: sqlite3.Connection) -> None:
+    """Golden migration for Task 6: Multi-Entity Extraction."""
+    conn.execute("PRAGMA foreign_keys = OFF")
+    # Create target tables
+    conn.execute(
+        "CREATE TABLE salespersons (id INTEGER PRIMARY KEY, name TEXT NOT NULL, "
+        "email TEXT NOT NULL UNIQUE, region TEXT NOT NULL)"
+    )
+    conn.execute(
+        "CREATE TABLE customers (id INTEGER PRIMARY KEY, name TEXT NOT NULL, "
+        "email TEXT NOT NULL UNIQUE, tier TEXT NOT NULL)"
+    )
+    conn.execute(
+        "CREATE TABLE products (id INTEGER PRIMARY KEY, name TEXT NOT NULL, "
+        "sku TEXT NOT NULL UNIQUE, category TEXT NOT NULL)"
+    )
+    conn.execute(
+        "CREATE TABLE sales (id INTEGER PRIMARY KEY, salesperson_id INTEGER NOT NULL, "
+        "customer_id INTEGER NOT NULL, product_id INTEGER NOT NULL, "
+        "quantity INTEGER NOT NULL, unit_price REAL NOT NULL, "
+        "discount_pct INTEGER NOT NULL DEFAULT 0, sale_date TEXT NOT NULL, "
+        "FOREIGN KEY (salesperson_id) REFERENCES salespersons(id), "
+        "FOREIGN KEY (customer_id) REFERENCES customers(id), "
+        "FOREIGN KEY (product_id) REFERENCES products(id))"
+    )
+    conn.execute(
+        "CREATE TABLE data_issues (id INTEGER PRIMARY KEY, source_table TEXT NOT NULL, "
+        "source_row_id INTEGER NOT NULL, issue_type TEXT NOT NULL, "
+        "issue_detail TEXT NOT NULL)"
+    )
+    # Populate salespersons (TRIM email)
+    conn.execute(
+        "INSERT INTO salespersons (name, email, region) "
+        "SELECT DISTINCT rep_name, TRIM(rep_email), rep_region FROM sales_records"
+    )
+    # Populate customers (exclude empty email rows)
+    conn.execute(
+        "INSERT INTO customers (name, email, tier) "
+        "SELECT DISTINCT customer_name, customer_email, customer_tier "
+        "FROM sales_records WHERE customer_email IS NOT NULL AND customer_email != ''"
+    )
+    # Populate products
+    conn.execute(
+        "INSERT INTO products (name, sku, category) "
+        "SELECT DISTINCT product_name, product_sku, product_category FROM sales_records"
+    )
+    # Populate sales (exclude rows with empty customer email)
+    conn.execute(
+        "INSERT INTO sales (salesperson_id, customer_id, product_id, quantity, "
+        "unit_price, discount_pct, sale_date) "
+        "SELECT sp.id, c.id, p.id, sr.quantity, sr.unit_price, sr.discount_pct, sr.sale_date "
+        "FROM sales_records sr "
+        "JOIN salespersons sp ON TRIM(sr.rep_email) = sp.email "
+        "JOIN customers c ON sr.customer_email = c.email "
+        "JOIN products p ON sr.product_sku = p.sku "
+        "WHERE sr.customer_email IS NOT NULL AND sr.customer_email != ''"
+    )
+    # Log data issues (empty email)
+    conn.execute(
+        "INSERT INTO data_issues (source_table, source_row_id, issue_type, issue_detail) "
+        "SELECT 'sales_records', id, 'empty_email', "
+        "'Customer email is empty for: ' || customer_name "
+        "FROM sales_records WHERE customer_email IS NULL OR customer_email = ''"
+    )
+    conn.execute("DROP TABLE sales_records")
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.commit()
+
+
+def golden_task7(conn: sqlite3.Connection) -> None:
+    """Golden migration for Task 7: Dual-Source Consolidation."""
+    conn.execute("PRAGMA foreign_keys = OFF")
+
+    # Create unified_customers
+    conn.execute(
+        "CREATE TABLE unified_customers (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+        "legacy_id INTEGER, modern_uuid TEXT, name TEXT, email TEXT, phone TEXT, "
+        "tier TEXT NOT NULL DEFAULT 'free', source TEXT NOT NULL, created_at TEXT)"
+    )
+    # Insert legacy-only customers (no email match in modern)
+    conn.execute(
+        "INSERT INTO unified_customers (legacy_id, modern_uuid, name, email, phone, tier, source, created_at) "
+        "SELECT lc.id, NULL, lc.full_name, lc.contact_email, lc.phone, lc.account_type, 'legacy', lc.join_date "
+        "FROM legacy_customers lc "
+        "WHERE lc.contact_email IS NULL OR lc.contact_email NOT IN (SELECT email_address FROM modern_users WHERE email_address IS NOT NULL)"
+    )
+    # Insert modern-only users (no email match in legacy)
+    conn.execute(
+        "INSERT INTO unified_customers (legacy_id, modern_uuid, name, email, phone, tier, source, created_at) "
+        "SELECT NULL, mu.uuid, mu.display_name, mu.email_address, NULL, "
+        "CASE mu.subscription_tier "
+        "  WHEN 1 THEN 'free' WHEN 2 THEN 'basic' WHEN 3 THEN 'premium' WHEN 4 THEN 'enterprise' "
+        "  ELSE 'free' END, "
+        "'modern', mu.created_at "
+        "FROM modern_users mu "
+        "WHERE mu.email_address NOT IN (SELECT contact_email FROM legacy_customers WHERE contact_email IS NOT NULL)"
+    )
+    # Insert matched (both) customers — legacy name + modern tier
+    conn.execute(
+        "INSERT INTO unified_customers (legacy_id, modern_uuid, name, email, phone, tier, source, created_at) "
+        "SELECT lc.id, mu.uuid, lc.full_name, lc.contact_email, lc.phone, "
+        "CASE mu.subscription_tier "
+        "  WHEN 1 THEN 'free' WHEN 2 THEN 'basic' WHEN 3 THEN 'premium' WHEN 4 THEN 'enterprise' "
+        "  ELSE 'free' END, "
+        "'both', lc.join_date "
+        "FROM legacy_customers lc "
+        "JOIN modern_users mu ON lc.contact_email = mu.email_address "
+        "WHERE lc.contact_email IS NOT NULL"
+    )
+
+    # Create unified_products
+    conn.execute(
+        "CREATE TABLE unified_products (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+        "code TEXT NOT NULL UNIQUE, title TEXT NOT NULL, price REAL NOT NULL, "
+        "source TEXT NOT NULL)"
+    )
+    # Legacy products
+    conn.execute(
+        "INSERT INTO unified_products (code, title, price, source) "
+        "SELECT code, description, "
+        "CAST(REPLACE(REPLACE(unit_price, '$', ''), ',', '') AS REAL), 'legacy' "
+        "FROM legacy_products"
+    )
+    # Modern products (no code overlap expected)
+    conn.execute(
+        "INSERT INTO unified_products (code, title, price, source) "
+        "SELECT sku, title, base_price, 'modern' "
+        "FROM modern_catalog"
+    )
+
+    # Create migration_issues
+    conn.execute(
+        "CREATE TABLE migration_issues (id INTEGER PRIMARY KEY, "
+        "source_system TEXT NOT NULL, source_table TEXT NOT NULL, "
+        "source_id TEXT NOT NULL, issue_type TEXT NOT NULL, "
+        "resolution TEXT NOT NULL)"
+    )
+    # Log NULL email customer
+    conn.execute(
+        "INSERT INTO migration_issues (source_system, source_table, source_id, issue_type, resolution) "
+        "SELECT 'legacy', 'legacy_customers', CAST(id AS TEXT), 'null_email', "
+        "'Imported without email' "
+        "FROM legacy_customers WHERE contact_email IS NULL"
+    )
+    # Log orphaned transactions
+    conn.execute(
+        "INSERT INTO migration_issues (source_system, source_table, source_id, issue_type, resolution) "
+        "SELECT 'modern', 'modern_transactions', CAST(id AS TEXT), 'orphaned_record', "
+        "'User UUID not found: ' || user_uuid "
+        "FROM modern_transactions WHERE user_uuid NOT IN (SELECT uuid FROM modern_users)"
+    )
+
+    # Create unified_orders
+    conn.execute(
+        "CREATE TABLE unified_orders (id INTEGER PRIMARY KEY AUTOINCREMENT, "
+        "customer_id INTEGER NOT NULL, product_id INTEGER, amount REAL NOT NULL, "
+        "currency TEXT NOT NULL DEFAULT 'USD', status TEXT NOT NULL, "
+        "order_date TEXT, source TEXT NOT NULL, "
+        "FOREIGN KEY (customer_id) REFERENCES unified_customers(id))"
+    )
+    # Legacy orders
+    conn.execute(
+        "INSERT INTO unified_orders (customer_id, product_id, amount, currency, status, order_date, source) "
+        "SELECT uc.id, up.id, "
+        "CAST(REPLACE(REPLACE(lo.total_amount, '$', ''), ',', '') AS REAL), "
+        "'USD', lo.order_status, lo.order_date, 'legacy' "
+        "FROM legacy_orders lo "
+        "JOIN legacy_customers lc ON lo.customer_id = lc.id "
+        "JOIN unified_customers uc ON (uc.legacy_id = lc.id) "
+        "LEFT JOIN unified_products up ON lo.product_code = up.code"
+    )
+    # Modern transactions (exclude orphans)
+    conn.execute(
+        "INSERT INTO unified_orders (customer_id, product_id, amount, currency, status, order_date, source) "
+        "SELECT uc.id, up.id, mt.amount, "
+        "COALESCE(mt.currency, 'USD'), "
+        "CASE mt.tx_status "
+        "  WHEN 1 THEN 'pending' WHEN 2 THEN 'processing' WHEN 3 THEN 'complete' "
+        "  WHEN 4 THEN 'failed' WHEN 5 THEN 'refunded' ELSE 'unknown' END, "
+        "mt.created_at, 'modern' "
+        "FROM modern_transactions mt "
+        "JOIN modern_users mu ON mt.user_uuid = mu.uuid "
+        "JOIN unified_customers uc ON (uc.modern_uuid = mu.uuid OR uc.email = mu.email_address) "
+        "LEFT JOIN unified_products up ON mt.item_sku = up.code"
+    )
+
+    # Clean up source tables
+    conn.execute("DROP TABLE legacy_customers")
+    conn.execute("DROP TABLE legacy_orders")
+    conn.execute("DROP TABLE legacy_products")
+    conn.execute("DROP TABLE modern_users")
+    conn.execute("DROP TABLE modern_transactions")
+    conn.execute("DROP TABLE modern_catalog")
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.commit()
+
+
+# =============================================================================
 # Task Registry
 # =============================================================================
 
 TASKS = {
     "column-restructure": {
         "seed_fn": seed_task1,
+        "golden_fn": golden_task1,
         "target_ddl": TASK1_TARGET_DDL,
-        "description": "Merge first_name and last_name into a single full_name column without data loss",
+        "description": "Merge first_name and last_name into a single full_name column (concatenated with a space) without data loss. Apostrophes in names (e.g., O'Brien) must be preserved.",
         "difficulty": "easy",
         "max_steps": 10,
     },
     "soft-delete-restoration": {
         "seed_fn": seed_task4,
+        "golden_fn": golden_task4,
         "target_ddl": TASK4_TARGET_DDL,
-        "description": "Restore deleted products from deletion_log, add is_deleted/deleted_at columns",
+        "description": (
+            "Restore deleted products from the deletion_log table back into the products table. "
+            "Use product_id from deletion_log (NOT the log's id column) as the product's primary key. "
+            "Add is_deleted and deleted_at columns. Original products: is_deleted=0, deleted_at=NULL. "
+            "Restored products: is_deleted=1, deleted_at copied from log. "
+            "Note: stock=0 on a product does NOT mean it was deleted."
+        ),
         "difficulty": "easy",
         "max_steps": 10,
     },
     "table-normalization": {
         "seed_fn": seed_task2,
+        "golden_fn": golden_task2,
         "target_ddl": TASK2_TARGET_DDL,
-        "description": "Decompose a flat purchases table into normalized customers and orders tables with FK",
+        "description": (
+            "Decompose the flat purchases table into normalized customers and orders tables with a FK. "
+            "customers should have DISTINCT entries by email. "
+            "All 7 original purchases must be preserved as individual orders linked to the correct customer."
+        ),
         "difficulty": "medium",
         "max_steps": 15,
     },
     "schema-version-merge": {
         "seed_fn": seed_task5,
+        "golden_fn": golden_task5,
         "target_ddl": TASK5_TARGET_DDL,
-        "description": "Merge overlapping v1/v2 product tables with price coercion and conflict resolution",
+        "description": (
+            "Merge products_v1 and products_v2 into a single products table. "
+            "v1 prices are stored as TEXT ('$XX.XX') — coerce to REAL. v2 uses 'unit_cost' — rename to 'price'. "
+            "For ID conflicts (same ID in both tables), v2 values WIN for name/price. "
+            "Set source='v1' for v1-only, 'v2' for v2-only, 'both' for conflicts."
+        ),
         "difficulty": "medium",
         "max_steps": 15,
     },
     "multi-entity-extraction": {
         "seed_fn": seed_task6,
+        "golden_fn": golden_task6,
         "target_ddl": TASK6_TARGET_DDL,
-        "description": "Decompose a sales god-table into 3NF with 3 FKs and invalid data routing",
+        "description": (
+            "Decompose the sales_records god-table into 3NF: salespersons, customers, products, sales, data_issues. "
+            "Route records with empty string '' customer emails to data_issues (not just NULL). "
+            "TRIM leading/trailing whitespace from all email addresses before inserting. "
+            "Each sale must link to the correct salesperson, customer, and product via FKs."
+        ),
         "difficulty": "medium",
         "max_steps": 15,
     },
     "cascade-migration": {
         "seed_fn": seed_task3,
+        "golden_fn": golden_task3,
         "target_ddl": TASK3_TARGET_DDL,
-        "description": "Multi-table FK cascade with type coercion, NULL handling, and orphan audit logging",
+        "description": (
+            "Multi-table FK cascade with type coercion, NULL handling, and orphan audit logging. "
+            "Convert salary from TEXT ('$90000') to INTEGER (90000) by stripping '$' and ','. "
+            "Remove employees with NULL salary and log them to audit_log with reason='null_salary'. "
+            "Remove orphaned assets (employee_id not in employees) and log them with reason='orphaned_record'. "
+            "Enforce NOT NULL and FK constraints on all tables."
+        ),
         "difficulty": "hard",
         "max_steps": 20,
     },
     "dual-source-consolidation": {
         "seed_fn": seed_task7,
+        "golden_fn": golden_task7,
         "target_ddl": TASK7_TARGET_DDL,
-        "description": "Merge 6 tables from two incompatible systems into 4 unified tables with cross-system dedup",
+        "description": (
+            "Merge 6 tables from Legacy CRM + Modern SaaS into 4 unified tables. "
+            "Cross-system customer dedup: match by email address. Set source='both' for matches, "
+            "'legacy' or 'modern' for unmatched. "
+            "Tier mapping (modern subscription_tier): 1=free, 2=basic, 3=premium, 4=enterprise. "
+            "Status mapping (modern tx_status): 1=pending, 2=processing, 3=complete, 4=failed, 5=refunded. "
+            "Legacy amounts are TEXT ('$1,234.56') — coerce to REAL. NULL currency defaults to 'USD'. "
+            "Log orphaned transactions (user_uuid not found) to migration_issues with issue_type='orphaned_record'. "
+            "Log customers with NULL email to migration_issues with issue_type='null_email'."
+        ),
         "difficulty": "hard",
         "max_steps": 20,
     },
