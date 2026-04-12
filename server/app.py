@@ -18,14 +18,15 @@ from typing import Any, Dict, List, Optional
 from fastapi import Body
 
 # Support both in-repo and standalone imports
+import server.environment # Ensuring server is treated as a package
 try:
-    from openenv.core.env_server.http_server import create_app
-    from ..models import MigrationAction, MigrationObservation
-    from .environment import DbMigrationEnvironment
-except ImportError:
     from openenv.core.env_server.http_server import create_app
     from models import MigrationAction, MigrationObservation
     from server.environment import DbMigrationEnvironment
+except ImportError:
+    from openenv.core.env_server.http_server import create_app
+    from ..models import MigrationAction, MigrationObservation
+    from .environment import DbMigrationEnvironment
 
 
 # Get task name from environment variable (default to column-restructure)

@@ -1048,7 +1048,7 @@ def golden_task7(conn: sqlite3.Connection) -> None:
 # TASK 8: Data Poisoning & Quarantine Routing (Extreme)
 # =============================================================================
 
-TASK8_TARGET_DDL = \"\"\"
+TASK8_TARGET_DDL = """
 CREATE TABLE inventory (
     id INTEGER PRIMARY KEY,
     name TEXT NOT NULL,
@@ -1063,7 +1063,7 @@ CREATE TABLE inventory_quarantine (
     raw_sku TEXT,
     error_reason TEXT
 );
-\"\"\".strip()
+""".strip()
 
 def seed_task8(conn):
     conn.execute("CREATE TABLE staging_data (id INTEGER, item TEXT, cost TEXT, sku_code TEXT)")

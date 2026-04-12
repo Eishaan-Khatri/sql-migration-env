@@ -27,9 +27,9 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 
 # Import seeds for golden migration functions
 try:
-    from .. import seeds
-except ImportError:
     import seeds
+except ImportError:
+    from .. import seeds
 
 
 def _get_table_names(conn: sqlite3.Connection) -> Set[str]:

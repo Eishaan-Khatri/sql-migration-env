@@ -23,12 +23,12 @@ from typing import Any, Dict, List, Optional
 # Support both in-repo and standalone imports
 try:
     from openenv.core.env_server.interfaces import Environment
-    from ..models import MigrationAction, MigrationObservation, MigrationState
-    from .grader import StateReconciler
-except ImportError:
-    from openenv.core.env_server.interfaces import Environment
     from models import MigrationAction, MigrationObservation, MigrationState
     from server.grader import StateReconciler
+except ImportError:
+    from openenv.core.env_server.interfaces import Environment
+    from ..models import MigrationAction, MigrationObservation, MigrationState
+    from .grader import StateReconciler
 
 # Import seeds (handle both import paths)
 try:
