@@ -61,6 +61,18 @@ Database schema migration is a **real-world task** that humans perform daily. Un
 - **Orphaned FKs** (references to deleted entities — tests audit logging)
 - **NULL currency** (must default to 'USD' — tests COALESCE)
 
+## Baseline Scores (Qwen/Qwen3-32B)
+Tested deterministically via `inference.py` on default seeds:
+| Task | Success Score | Step Count |
+|------|--------------|------------|
+| `column-restructure` | 0.99 | 4-5 |
+| `soft-delete-restoration` | 0.99 | 5-7 |
+| `table-normalization` | 0.99 | 8-10 |
+| `schema-version-merge` | 0.99 | 9-11 |
+| `multi-entity-extraction` | 0.99 | 10-12 |
+| `cascade-migration` | 0.99 | 13-15 |
+| `dual-source-consolidation`| 0.99 | 15-18 |
+
 ## Dynamic Golden Database Grading
 
 Unlike benchmarks with hardcoded expected values, our grader is **seed-independent**:
@@ -74,6 +86,15 @@ Unlike benchmarks with hardcoded expected values, our grader is **seed-independe
 - **Data match (40%)**: Row content matches golden DB (order-independent)
 - **FK & integrity (20%)**: Foreign keys enforced, PRAGMA integrity_check passes
 - **Anti-exploit (10%)**: No empty tables, no schema pollution
+
+### Reward Function
+The episode step reward is the exact delta of the migration progress score:
+```python
+step_reward = current_score - previous_score
+```
+- If an agent reverts progress, `step_reward` is negative.
+- Exploit attempts (e.g. `PRAGMA foreign_keys = OFF`) yield immediate `reward = -0.3`.
+- Auto-submitted invalid schemas yield negative deltas for missing data.
 
 ## Security & Robustness
 
