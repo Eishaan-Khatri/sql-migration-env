@@ -15,14 +15,38 @@ pinned: false
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![Hugging Face Space](https://img.shields.io/badge/HF%20Space-Deployed-orange)](https://huggingface.co/spaces/Eishaan/sql-migration-env)
 
-This repository contains a high-fidelity valuation environment designed to measure the capability of AI agents in performing complex SQL schema migrations. Unlike simple text-to-SQL benchmarks, this environment requires **state-aware reasoning**, **data integrity protection**, and **adversarial edge-case handling**.
+An OpenEnv-compatible environment for evaluating AI agents on autonomous SQLite database migration tasks. The agent receives a broken/drifted schema and must write SQL to transform it to a target state without losing data.
 
 ---
 
 ## 🏗️ Architecture Overview
 
-The environment follows the **OpenEnv** specification, exposing a standardized API for agents to interact with an isolated SQLite instance.
+The suite combines formal sequence modeling with a modular local engine.
 
+### System Mapping
+```
+┌─────────────────────────────────┐
+│  inference.py (Baseline Agent)  │
+│  - LLM API calls (OpenAI fmt)  │
+│  - JSON mode + fallback parser │
+└─────────┬───────────────────────┘
+          │ MigrationAction
+┌─────────▼───────────────────────┐
+│  environment.py (OpenEnv Env)   │
+│  - SQLite execution engine      │
+│  - ERD & Schema Diff generator  │
+│  - SQL timeout & Blacklist      │
+└─────────┬───────────────────────┘
+          │ score()
+┌─────────▼───────────────────────┐
+│  grader.py (Golden DB Engine)   │
+│  - Dynamic golden reference DB  │
+│  - Schema + data + FK scoring   │
+│  - Anti-exploit checks          │
+└─────────────────────────────────┘
+```
+
+### Protocol Flow
 ```mermaid
 sequenceDiagram
     participant Agent
@@ -53,83 +77,83 @@ sequenceDiagram
 
 ## 🎯 Benchmark Tasks
 
-The suite consists of **7 progressive tasks** representing real-world database engineering challenges:
+| # | Task | Difficulty | Challenge |
+|---|------|-----------|-----------|
+| 1 | `column-restructure` | 🟢 Easy | Merge first_name + last_name → full_name (with apostrophes) |
+| 2 | `soft-delete-restoration` | 🟢 Easy | Restore deleted products from `deletion_log` |
+| 3 | `table-normalization` | 🟡 Medium | Normalize `purchases` → `customers` + `orders` + FK |
+| 4 | `schema-version-merge` | 🟡 Medium | Merge v1/v2 product tables with price coercion |
+| 5 | `multi-entity-extraction` | 🟡 Medium | 3NF decomposition with invalid data routing |
+| 6 | `cascade-migration` | 🔴 Hard | 4-table FK cascade, type coercion, orphan audit |
+| 7 | `dual-source-consolidation`| 🔴 Hard | 6→4 table merge, cross-system email dedup |
 
-| Task | Difficulty | Core Challenge |
-| :--- | :--- | :--- |
-| **Column Restructure** | 🟢 Easy | Merging `first_name` + `last_name` while preserving apostrophes (O'Brien). |
-| **Soft-Delete Restoration** | 🟢 Easy | Restoring products from a deletion log and managing boolean flags. |
-| **Table Normalization** | 🟡 Medium | Decomposing a denormalized "God Table" into 3NF (`customers` → `orders`). |
-| **Schema Version Merge** | 🟡 Medium | Merging conflicting schemas (v1 vs v2) with complex price coercion. |
-| **Multi-Entity Extraction** | 🟡 Medium | 3NF decomposition with strict data routing for invalid records. |
-| **Cascade Migration** | 🔴 Hard | 4-table FK cascade, orphan audit logging, and strict data type cleanup. |
-| **Dual-Source Consolidation** | 🔴 Hard | Merging 6 tables from two incompatible systems (Legacy CRM + Modern SaaS). |
+### 🛠️ Adversarial Edge Cases (The "Stress Tests")
+- **O'Brien**: Apostrophe in data — tests SQL escaping and string literal handling.
+- **$90,000 salary**: TEXT→INTEGER coercion — tests complex string parsing and casting.
+- **Empty string emails**: NOT NULL vs Empty — tests data quality validation logic.
+- **Leading whitespace**: ` alice@company.com` — tests TRIM awareness.
+- **ID conflicts**: Overlapping IDs in dual sources — tests intelligent merge logic.
+- **Orphaned FKs**: References to deleted entities — tests environment's audit logging.
+- **NULL currency**: Must default to 'USD' — tests COALESCE usage.
 
 ---
 
-## ⚖️ Grading & Reward Function
+## ⚖️ Evaluation Baselines
 
-The benchmark uses a **Dynamic Golden Database Grader**. Instead of string-matching SQL, we compare the *final state* of the agent's database against a "perfectly migrated" reference database.
+| Task | Qwen 32B Score | GPT-OSS 120B |
+|------|--------------|--------------|
+| `column-restructure` | 0.99 | 0.99 |
+| `soft-delete-restoration` | 0.99 | 0.99 |
+| `table-normalization` | 0.94 | 0.99 |
+| `schema-version-merge` | 0.93 | 0.98 |
+| `multi-entity-extraction` | 0.35 | 0.65 |
+| `cascade-migration` | 0.61 | 0.83 |
+| `dual-source-consolidation`| 0.28 | 0.38 |
+
+---
+
+## 🛡️ Security & Reward Function
 
 ### The Reward Formula
-Rewards are sparse/dense deltas calculated at every step:
+Rewards are calculated as progress deltas: $R_t = P_t - P_{t-1}$.
+Progress $P_t$ is a weighted sum (0.01 to 0.99):
+- **Schema Match (30%)**: Tables exist with correct `(name, type)` signatures.
+- **Data Match (40%)**: Row content matches golden DB (order-independent).
+- **FK & Integrity (20%)**: Foreign keys enforced, `integrity_check` passes.
+- **Anti-Exploit (10%)**: Penalty for empty tables or schema pollution.
 
-$$R_t = P_t - P_{t-1}$$
-
-Where $P_t$ (Progress) is a weighted sum ($[0.01, 0.99]$):
-- **Schema Match (30%):** Validates table existence and strict `(name, type)` signatures.
-- **Data Match (40%):** Validates row content, counts, and checks for data loss/pollution.
-- **Integrity (20%):** Validates `PRAGMA foreign_key_check` and `PRAGMA integrity_check`.
-- **Anti-Exploit (10%):** Penalizes empty tables or leftover "garbage" tables.
-
----
-
-## 🛡️ Security & Sandbox Guardrails
-
-To prevent agents from faking results or exploiting the environment, we implement:
-- **PRAGMA Blacklist:** Commands like `foreign_keys = OFF` or `PRAGMA foreign_keys = 0` are strictly blocked.
-- **Query Timeout:** Infinite loops (e.g., recursive CTEs) are auto-terminated via a SQLite progress handler budget.
-- **Dangerous Command Filter:** `ATTACH`, `DETACH`, and `LOAD_EXTENSION` are blocked via regex.
-- **Isolation:** Each episode runs in a fresh, isolated `:memory:` database with no persistence.
+### Security Guardrails
+- **PRAGMA Blacklist**: `foreign_keys = OFF` and `writable_schema = ON` are blocked.
+- **Query Timeout**: SQLite progress handler terminates queries exceeding 500k ops.
+- **Dangerous SQL**: `ATTACH`, `DETACH`, and `LOAD_EXTENSION` are filtered.
 
 ---
 
-## 🚀 Getting Started
+## 🚀 Setup & Usage
 
-### Local Deployment (Docker)
+### Local Deployment
 ```bash
-# Clone the repo
-git clone https://github.com/Eishaan-Khatri/sql-migration-env
-cd sql-migration-env
-
-# Build and run
-docker build -t sql-migration-env .
-docker run -p 7860:7860 sql-migration-env
+pip install -r requirements.txt
+python -m server.app  # Starts OpenEnv server on port 7860
 ```
 
-### Run Baseline Evaluation
+### Environment Variables
 ```bash
-python inference.py
+export HF_TOKEN=your_token
+export API_BASE_URL=https://router.huggingface.co/v1
+export MODEL_NAME=Qwen/Qwen2.5-72B-Instruct
 ```
 
----
-
-## 📊 Evaluation Baselines
-
-Results using `GPT-OSS-120B` class models:
-
-- **Avg. Benchmark Score:** 0.83 (Production ready)
-- **Task Success Rates:**
-  - Easy: 0.99
-  - Medium: 0.82
-  - Hard: 0.60
+### API Endpoints
+- `POST /reset`: Initialize migration episode.
+- `POST /step`: Execute SQL and reasoning.
+- `GET /tasks`: List all available scenarios.
+- `POST /grader`: Run deep comparison against Golden DB.
 
 ---
 
-## 🖼️ Observations & Visuals
-Each observation includes an `erd_visualization` field containing a **Mermaid.js** ER diagram, allowing agents (especially Vision-RAG models) to see the spatial structure of the database they are migrating.
-
----
+## 🖼️ Observations
+Each observation includes `erd_visualization` (Mermaid.js) and `schema_diff` to assist agents in understanding the current drift.
 
 ## 📄 License
-This benchmark is licensed under the MIT License. Built for the **OpenEnv Hackathon 2026**.
+MIT. Built for the **OpenEnv Hackathon 2026**.
