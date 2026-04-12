@@ -379,7 +379,7 @@ TASK5_TARGET_DDL = """CREATE TABLE products (
 
 TASK5_EXPECTED_ROW_COUNT = 9
 TASK5_EXPECTED_PRICE_SUM = round(12.50 + 9.99 + 45.00 + 32.50 + 5.99 + 99.99 + 67.00 + 23.50 + 11.00, 2)
-TASK5_EXPECTED_BOTH_COUNT = 2      # ids 1 and 2
+TASK5_EXPECTED_BOTH_SOURCE_COUNT = 2      # ids 1 and 2
 
 
 def seed_task5(conn: sqlite3.Connection) -> None:
@@ -1045,6 +1045,59 @@ def golden_task7(conn: sqlite3.Connection) -> None:
 
 
 # =============================================================================
+# TASK 8: Data Poisoning & Quarantine Routing (Extreme)
+# =============================================================================
+
+TASK8_TARGET_DDL = \"\"\"
+CREATE TABLE inventory (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    price REAL NOT NULL,
+    sku TEXT UNIQUE
+);
+
+CREATE TABLE inventory_quarantine (
+    id INTEGER PRIMARY KEY,
+    raw_name TEXT,
+    raw_price TEXT,
+    raw_sku TEXT,
+    error_reason TEXT
+);
+\"\"\".strip()
+
+def seed_task8(conn):
+    conn.execute("CREATE TABLE staging_data (id INTEGER, item TEXT, cost TEXT, sku_code TEXT)")
+    data = [
+        (1, "Oscilloscope", "1500.00", "OSC-001"),
+        (2, "Multimeter", "  75.50 ", "MUL-002"),
+        (3, "Soldering Iron", "$45.00", "SLD-003"),
+        (4, "Lead Solder", "N/A", "LSD-004"),
+        (5, "DC Power Supply", "299.99", "PWR-005"),
+        (6, "Unknown Device", "INVALID", "UNK-006"),
+        (7, "Wire Strippers", "$ 12.50", "WRE-007"),
+    ]
+    conn.executemany("INSERT INTO staging_data VALUES (?,?,?,?)", data)
+    conn.commit()
+
+def golden_task8(conn):
+    conn.execute("CREATE TABLE inventory (id INTEGER PRIMARY KEY, name TEXT NOT NULL, price REAL NOT NULL, sku TEXT UNIQUE)")
+    conn.execute("CREATE TABLE inventory_quarantine (id INTEGER PRIMARY KEY, raw_name TEXT, raw_price TEXT, raw_sku TEXT, error_reason TEXT)")
+    
+    # Process staging_data
+    cursor = conn.execute("SELECT id, item, cost, sku_code FROM staging_data")
+    for row in cursor.fetchall():
+        rid, name, cost, sku = row
+        clean_cost = cost.replace("$", "").strip()
+        
+        try:
+            price = float(clean_cost)
+            conn.execute("INSERT INTO inventory (id, name, price, sku) VALUES (?,?,?,?)", (rid, name, price, sku))
+        except ValueError:
+            conn.execute("INSERT INTO inventory_quarantine (raw_name, raw_price, raw_sku, error_reason) VALUES (?,?,?,?)", 
+                         (name, cost, sku, "invalid_numeric_format"))
+    conn.commit()
+
+# =============================================================================
 # Task Registry
 # =============================================================================
 
@@ -1061,13 +1114,7 @@ TASKS = {
         "seed_fn": seed_task4,
         "golden_fn": golden_task4,
         "target_ddl": TASK4_TARGET_DDL,
-        "description": (
-            "Restore deleted products from the deletion_log table back into the products table. "
-            "Use product_id from deletion_log (NOT the log's id column) as the product's primary key. "
-            "Add is_deleted and deleted_at columns. Original products: is_deleted=0, deleted_at=NULL. "
-            "Restored products: is_deleted=1, deleted_at copied from log. "
-            "Note: stock=0 on a product does NOT mean it was deleted."
-        ),
+        "description": "Restore deleted products from the deletion_log table back into the products table. Use product_id from deletion_log (NOT the log's id column) as the primary key. Add is_deleted (1) and deleted_at values from log. Original rows stay as is_deleted=0, deleted_at=NULL.",
         "difficulty": "easy",
         "max_steps": 10,
     },
@@ -1075,11 +1122,7 @@ TASKS = {
         "seed_fn": seed_task2,
         "golden_fn": golden_task2,
         "target_ddl": TASK2_TARGET_DDL,
-        "description": (
-            "Decompose the flat purchases table into normalized customers and orders tables with a FK. "
-            "customers should have DISTINCT entries by email. "
-            "All 7 original purchases must be preserved as individual orders linked to the correct customer."
-        ),
+        "description": "Normalize a flat purchases table into customers and orders tables linked by customer_id (FK). Ensure customers are distinct by email.",
         "difficulty": "medium",
         "max_steps": 15,
     },
@@ -1087,12 +1130,7 @@ TASKS = {
         "seed_fn": seed_task5,
         "golden_fn": golden_task5,
         "target_ddl": TASK5_TARGET_DDL,
-        "description": (
-            "Merge products_v1 and products_v2 into a single products table. "
-            "v1 prices are stored as TEXT ('$XX.XX') — coerce to REAL. v2 uses 'unit_cost' — rename to 'price'. "
-            "For ID conflicts (same ID in both tables), v2 values WIN for name/price. "
-            "Set source='v1' for v1-only, 'v2' for v2-only, 'both' for conflicts."
-        ),
+        "description": "Merge products_v1 (Legacy) and products_v2 (Modern) with ID collision logic: Modern (v2) wins. Coerce v1 price strings ($) to REAL.",
         "difficulty": "medium",
         "max_steps": 15,
     },
@@ -1100,12 +1138,7 @@ TASKS = {
         "seed_fn": seed_task6,
         "golden_fn": golden_task6,
         "target_ddl": TASK6_TARGET_DDL,
-        "description": (
-            "Decompose the sales_records god-table into 3NF: salespersons, customers, products, sales, data_issues. "
-            "Route records with empty string '' customer emails to data_issues (not just NULL). "
-            "TRIM leading/trailing whitespace from all email addresses before inserting. "
-            "Each sale must link to the correct salesperson, customer, and product via FKs."
-        ),
+        "description": "Decompose sales_records into 3NF: salespersons, customers, products, and sales. Route rows with missing emails to data_issues.",
         "difficulty": "medium",
         "max_steps": 15,
     },
@@ -1113,13 +1146,7 @@ TASKS = {
         "seed_fn": seed_task3,
         "golden_fn": golden_task3,
         "target_ddl": TASK3_TARGET_DDL,
-        "description": (
-            "Multi-table FK cascade with type coercion, NULL handling, and orphan audit logging. "
-            "Convert salary from TEXT ('$90000') to INTEGER (90000) by stripping '$' and ','. "
-            "Remove employees with NULL salary and log them to audit_log with reason='null_salary'. "
-            "Remove orphaned assets (employee_id not in employees) and log them with reason='orphaned_record'. "
-            "Enforce NOT NULL and FK constraints on all tables."
-        ),
+        "description": "Multi-table FK cascade with type coercion for salary and orphan logging for assets.",
         "difficulty": "hard",
         "max_steps": 20,
     },
@@ -1127,18 +1154,16 @@ TASKS = {
         "seed_fn": seed_task7,
         "golden_fn": golden_task7,
         "target_ddl": TASK7_TARGET_DDL,
-        "description": (
-            "Merge 6 tables from Legacy CRM + Modern SaaS into 4 unified tables. "
-            "Cross-system customer dedup: match by email address. Set source='both' for matches, "
-            "'legacy' or 'modern' for unmatched. "
-            "Tier mapping (modern subscription_tier): 1=free, 2=basic, 3=premium, 4=enterprise. "
-            "Status mapping (modern tx_status): 1=pending, 2=processing, 3=complete, 4=failed, 5=refunded. "
-            "Legacy amounts are TEXT ('$1,234.56') — coerce to REAL. NULL currency defaults to 'USD'. "
-            "Log orphaned transactions (user_uuid not found) to migration_issues with issue_type='orphaned_record'. "
-            "Log customers with NULL email to migration_issues with issue_type='null_email'."
-        ),
+        "description": "Consolidate Legacy CRM and Modern SaaS data with cross-system email deduping and complex state/type mapping.",
         "difficulty": "hard",
         "max_steps": 20,
     },
+    "data-poisoning-quarantine": {
+        "seed_fn": seed_task8,
+        "golden_fn": golden_task8,
+        "target_ddl": TASK8_TARGET_DDL,
+        "description": "The ultimate technical test: Migrate inventory from a 'poisoned' staging table. Cleanse raw price strings and route un-coerceable rows (like 'N/A') to a quarantine table while maintaining strict schema integrity.",
+        "difficulty": "extreme",
+        "max_steps": 15,
+    },
 }
-

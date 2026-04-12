@@ -178,28 +178,28 @@ class DbMigrationEnvironment(Environment):
         self._conn.set_progress_handler(_progress_callback, 1000)
         try:
             cursor = self._conn.execute(sql)
-            return cursor, None
+            return cursor, None, ops_count[0]
         except sqlite3.OperationalError as e:
             err_str = str(e).lower()
             if "interrupted" in err_str or ops_count[0] > _MAX_OPS:
-                return None, "Error: Query exceeded execution time limit (possible infinite loop). Simplify your query."
+                return None, "Error: Query exceeded execution time limit (possible infinite loop). Simplify your query.", ops_count[0]
             if "table" in err_str and "already exists" in err_str:
-                return None, f"Schema Error: {e}. You must DROP the old table first if replacing it."
+                return None, f"Schema Error: {e}. You must DROP the old table first if replacing it.", ops_count[0]
             if "has no column" in err_str:
-                return None, f"Schema Error: {e}. Check table columns."
-            return None, str(e)
+                return None, f"Schema Error: {e}. Check table columns.", ops_count[0]
+            return None, str(e), ops_count[0]
         except sqlite3.Warning as e:
             # Multi-statement fallback
             try:
                 self._conn.executescript(sql)
-                return None, None
+                return None, None, ops_count[0]
             except Exception as script_e:
-                return None, f"Error (Multi-Statement Fallback Failed): {script_e}. Original error: {e}"
+                return None, f"Error (Multi-Statement Fallback Failed): {script_e}. Original error: {e}", ops_count[0]
         except Exception as e:
             err_str = str(e).lower()
             if "values for" in err_str and "columns" in err_str:
-                return None, f"Data Error: {e}. Ensure you are inserting the correct number of columns."
-            return None, str(e)
+                return None, f"Data Error: {e}. Ensure you are inserting the correct number of columns.", ops_count[0]
+            return None, str(e), ops_count[0]
         finally:
             self._conn.set_progress_handler(None, 0)
 
@@ -404,7 +404,7 @@ class DbMigrationEnvironment(Environment):
                     self._in_explicit_tx = False
             else:
                 # --- Normal SQL execution with timeout (A1, A2) ---
-                cursor, error = self._execute_with_timeout(sql_command)
+                cursor, error, q_ops = self._execute_with_timeout(sql_command)
 
                 if error:
                     execution_result = error
@@ -452,11 +452,13 @@ class DbMigrationEnvironment(Environment):
 
         # Build metadata with reasoning and debug info
         execution_ms = int((time.time() - start_time) * 1000)
+        q_ops = q_ops if 'q_ops' in locals() else 0
         meta = {
             "reasoning": action.reasoning,
             "sql_executed": action.sql_command,
             "step": self._step_count,
             "execution_ms": execution_ms,
+            "query_ops": q_ops,
         }
         if action_error:
             meta["error"] = action_error
