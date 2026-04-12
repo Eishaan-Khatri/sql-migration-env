@@ -13,6 +13,7 @@ COPY . .
 ENV PYTHONPATH="/app:$PYTHONPATH"
 ENV PYTHONUNBUFFERED=1
 ENV PORT=7860
+ENV OPENENV_WEB_INTERFACE=true
 # Health check
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:7860/health')" || exit 1
