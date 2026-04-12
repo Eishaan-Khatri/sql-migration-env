@@ -47,9 +47,15 @@ def _get_table_names(conn: sqlite3.Connection) -> Set[str]:
 def _get_column_info(conn: sqlite3.Connection, table: str) -> List[dict]:
     """Get column info for a table. Returns list of {name, type, notnull, pk}."""
     try:
-        cursor = conn.execute(f"PRAGMA table_info({table})")
+        cursor = conn.execute(f"PRAGMA table_info([{table}])")
         return [
-            {"name": row[1].lower(), "type": row[2].upper(), "notnull": row[3], "pk": row[5]}
+            {
+                "name": row[1].lower(), 
+                "type": row[2].upper(), 
+                "notnull": row[3], 
+                "dflt_value": row[4],  # Added check for default values
+                "pk": row[5]
+            }
             for row in cursor.fetchall()
         ]
     except Exception:
@@ -61,9 +67,12 @@ def _get_column_names(conn: sqlite3.Connection, table: str) -> Set[str]:
     return {col["name"] for col in _get_column_info(conn, table)}
 
 
-def _get_column_signatures(conn: sqlite3.Connection, table: str) -> Set[Tuple[str, str]]:
-    """Get (name, type) tuples for strict schema grading."""
-    return {(col["name"], col["type"]) for col in _get_column_info(conn, table)}
+def _get_column_signatures(conn: sqlite3.Connection, table: str) -> Set[Tuple[str, str, int, Any]]:
+    """Get (name, type, notnull, dflt_value) tuples for absolute schema grading."""
+    return {
+        (col["name"], col["type"], col["notnull"], str(col["dflt_value"])) 
+        for col in _get_column_info(conn, table)
+    }
 
 
 def _get_row_count(conn: sqlite3.Connection, table: str) -> int:
@@ -158,24 +167,60 @@ def _compare_row_data(
     # Per-row comparison (order-independent for flexibility)
     golden_set = set()
     for row in golden_rows:
-        # Normalize: convert all values to strings for loose comparison
-        golden_set.add(tuple(str(v).strip() if v is not None else "" for v in row))
+        # Normalize: try numerical comparison first, fallback to string
+        normalized_golden = []
+        for v in row:
+            if v is None: normalized_golden.append("")
+            else:
+                try: 
+                    normalized_golden.append(float(v))
+                except (ValueError, TypeError):
+                    normalized_golden.append(str(v).strip())
+        golden_set.add(tuple(normalized_golden))
     
     matched = 0
     for row in agent_rows:
-        normalized = tuple(str(v).strip() if v is not None else "" for v in row)
-        if normalized in golden_set:
-            matched += 1
-            golden_set.discard(normalized)
+        # Normalize: try numerical comparison first, fallback to string
+        normalized_agent = []
+        for v in row:
+            if v is None: normalized_agent.append("")
+            else:
+                try: # If it looks like a number, treat as a float for comparison
+                    normalized_agent.append(float(v))
+                except (ValueError, TypeError):
+                    normalized_agent.append(str(v).strip())
+        
+        normalized_agent = tuple(normalized_agent)
+        
+        # Look for match in golden set with numerical tolerance
+        found = False
+        for g_row in list(golden_set):
+            # Compare rows with float tolerance where applicable
+            match = True
+            if len(normalized_agent) != len(g_row): continue
+            
+            for a_val, g_val in zip(normalized_agent, g_row):
+                if isinstance(a_val, float) and isinstance(g_val, float):
+                    if abs(a_val - g_val) > 1e-7:
+                        match = False; break
+                elif str(a_val) != str(g_val):
+                    match = False; break
+            
+            if match:
+                matched += 1
+                golden_set.discard(g_row)
+                found = True
+                break
     
     if len(golden_rows) == 0:
-        content_match = 0.0
+        content_match = 1.0 # Logic fix: if golden has no rows, agent with 0 rows is 1.0
     else:
         content_match = matched / len(golden_rows)
     
     # Penalize extra rows (data bloat)
     if len(agent_rows) > len(golden_rows):
-        bloat_penalty = max(0, 1.0 - (len(agent_rows) - len(golden_rows)) / len(golden_rows))
+        # 1% penalty per extra row to prevent "guessing" by dumping all possible data
+        bloat_penalty = max(0.5, 1.0 - (len(agent_rows) - len(golden_rows)) * 0.01)
         content_match *= bloat_penalty
     
     return 0.4 * count_match + 0.6 * content_match

@@ -351,19 +351,27 @@ class DbMigrationEnvironment(Environment):
                 metadata={"error": "not_initialized"},
             )
 
+        import time
+        start_time = time.time()
+
         self._step_count += 1
         sql_command = action.sql_command.strip()
 
         # --- A3: Dangerous SQL Blacklist ---
         sql_lower = sql_command.lower()
         if re.search(r"pragma\s+foreign_keys\s*=\s*(off|0)", sql_lower):
-            execution_result = "Security Error: Disabling PRAGMA foreign_keys is strictly explicitly forbidden."
+            execution_result = (
+                "Security Error: Disabling PRAGMA foreign_keys is strictly forbidden. "
+                "Tip: To maintain integrity, perform your migration using temporary tables "
+                "or deferred constraints instead of disabling enforcement."
+            )
             action_error = "pragma_off_blocked"
         elif _DANGEROUS_PATTERNS.search(sql_command):
             execution_result = (
                 "Error: This SQL command is not allowed for security reasons. "
                 "ATTACH DATABASE, DETACH DATABASE, LOAD_EXTENSION, and "
-                "PRAGMA writable_schema are blocked."
+                "PRAGMA writable_schema are blocked. "
+                "Tip: Use standard DML (INSERT/UPDATE/DELETE) and DDL (CREATE/DROP) within a single database."
             )
             action_error = "blocked_command"
         else:
@@ -443,10 +451,12 @@ class DbMigrationEnvironment(Environment):
         self._state.migration_progress = current_score
 
         # Build metadata with reasoning and debug info
+        execution_ms = int((time.time() - start_time) * 1000)
         meta = {
             "reasoning": action.reasoning,
             "sql_executed": action.sql_command,
             "step": self._step_count,
+            "execution_ms": execution_ms,
         }
         if action_error:
             meta["error"] = action_error
