@@ -1,3 +1,11 @@
+---
+title: SQL Migration Agent
+emoji: 🗄️
+colorFrom: blue
+colorTo: indigo
+sdk: docker
+pinned: false
+---
 # SQL Schema Migration Agent — OpenEnv Benchmark
 
 An OpenEnv-compatible environment for evaluating AI agents on autonomous SQLite database migration tasks. The agent receives a broken/drifted schema and must write SQL to transform it to a target state without losing data.
