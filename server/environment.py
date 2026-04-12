@@ -110,6 +110,47 @@ class DbMigrationEnvironment(Environment):
         except Exception:
             return ""
 
+    def _generate_erd(self) -> str:
+        """Generate a Mermaid.js erDiagram based on the current database structure."""
+        if self._conn is None:
+            return ""
+        try:
+            lines = ["erDiagram"]
+            
+            # 1. Get all tables
+            cursor = self._conn.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' "
+                "AND name NOT LIKE 'sqlite_%' ORDER BY name"
+            )
+            tables = [row[0] for row in cursor.fetchall()]
+            
+            relationships = []
+            
+            for table in tables:
+                lines.append(f"    {table} {{")
+                # 2. Get column info for each table
+                cursor = self._conn.execute(f"PRAGMA table_info([{table}])")
+                for col in cursor.fetchall():
+                    # col[1]: name, col[2]: type, col[5]: pk
+                    name = col[1]
+                    dtype = col[2].replace(" ", "_")
+                    is_pk = "PK" if col[5] else ""
+                    lines.append(f"        {dtype} {name} {is_pk}")
+                lines.append("    }")
+                
+                # 3. Get foreign keys for relationships
+                cursor = self._conn.execute(f"PRAGMA foreign_key_list([{table}])")
+                for fk in cursor.fetchall():
+                    # fk[2]: to_table, fk[3]: from_col, fk[4]: to_col
+                    to_table = fk[2]
+                    relationships.append(f"    {table} ||--o{{ {to_table} : \"references\"")
+            
+            # Append unique relationships to avoid bloat
+            lines.extend(list(set(relationships)))
+            return "\n".join(lines)
+        except Exception:
+            return "erDiagram\n    ERROR { string info }"
+
     def _is_read_query(self, sql: str) -> bool:
         """Check if SQL is a read-only query (SELECT or certain PRAGMAs)."""
         stripped = sql.strip().upper()
@@ -273,6 +314,7 @@ class DbMigrationEnvironment(Environment):
             migration_progress=initial_score,
             task_name=self.task_name,
             schema_diff=diff if diff else "Schemas match exactly.",
+            erd_visualization=self._generate_erd(),
             metadata={"status": "ready"},
         )
 
@@ -432,6 +474,7 @@ class DbMigrationEnvironment(Environment):
             migration_progress=current_score,
             task_name=self.task_name,
             schema_diff=diff if diff else "Schemas match exactly.",
+            erd_visualization=self._generate_erd(),
             metadata=meta,
         )
 

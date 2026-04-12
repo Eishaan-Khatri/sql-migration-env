@@ -57,44 +57,226 @@ from fastapi.responses import HTMLResponse
 
 @app.get("/", response_class=HTMLResponse)
 async def root():
-    """Root endpoint — returns a status page for the HF Space UI."""
+    """Root endpoint — returns a premium status page for the HF Space UI."""
     return """<!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-    <title>SQL Migration Agent -- OpenEnv</title>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SQL Migration Agent | OpenEnv Benchmark</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+    <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
     <style>
-        body { font-family: monospace; background: #0d1117; color: #e6edf3; padding: 40px; }
-        h1 { color: #58a6ff; } h2 { color: #79c0ff; }
-        .ok { color: #3fb950; } .endpoint { color: #d2a8ff; }
-        pre { background: #161b22; padding: 12px; border-radius: 6px; }
-        a { color: #58a6ff; }
-        .easy { color: #3fb950; } .medium { color: #d29922; } .hard { color: #f85149; }
+        :root {
+            --bg: #03060b;
+            --card-bg: rgba(13, 17, 23, 0.8);
+            --primary: #58a6ff;
+            --accent: #d2a8ff;
+            --success: #3fb950;
+            --warning: #d29922;
+            --danger: #f85149;
+            --text-main: #e6edf3;
+            --text-dim: #8b949e;
+            --border: #30363d;
+        }
+
+        * { box-sizing: border-box; margin: 0; padding: 0; }
+        body { 
+            font-family: 'Outfit', sans-serif; 
+            background: var(--bg); 
+            color: var(--text-main); 
+            line-height: 1.6;
+            overflow-x: hidden;
+        }
+
+        .background-blob {
+            position: fixed;
+            width: 600px;
+            height: 600px;
+            background: radial-gradient(circle, rgba(88, 166, 255, 0.1) 0%, rgba(210, 168, 255, 0.05) 50%, transparent 100%);
+            border-radius: 50%;
+            z-index: -1;
+            filter: blur(80px);
+            animation: move 20s infinite alternate;
+        }
+
+        @keyframes move {
+            from { transform: translate(-10%, -10%); }
+            to { transform: translate(20%, 30%); }
+        }
+
+        .container { max-width: 1100px; margin: 0 auto; padding: 60px 20px; }
+        
+        header { 
+            margin-bottom: 60px; 
+            text-align: center;
+            border-bottom: 1px solid var(--border);
+            padding-bottom: 40px;
+        }
+
+        h1 { font-size: 3rem; font-weight: 700; margin-bottom: 10px; color: var(--primary); letter-spacing: -1px; }
+        .badge {
+            display: inline-block;
+            padding: 4px 12px;
+            background: rgba(63, 185, 80, 0.15);
+            color: var(--success);
+            border: 1px solid rgba(63, 185, 80, 0.3);
+            border-radius: 20px;
+            font-size: 0.9rem;
+            font-weight: 600;
+            margin-top: 10px;
+        }
+
+        .dashboard-grid {
+            display: grid;
+            grid-template-columns: 2fr 1fr;
+            gap: 30px;
+        }
+
+        .card {
+            background: var(--card-bg);
+            border: 1px solid var(--border);
+            border-radius: 16px;
+            padding: 30px;
+            backdrop-filter: blur(10px);
+            margin-bottom: 30px;
+        }
+
+        h2 { font-size: 1.5rem; margin-bottom: 25px; color: var(--accent); }
+
+        .endpoint-list { list-style: none; }
+        .endpoint-item {
+            display: flex;
+            align-items: center;
+            padding: 12px;
+            border-bottom: 1px solid var(--border);
+            font-family: 'JetBrains Mono', monospace;
+        }
+        .method { font-weight: 700; width: 60px; font-size: 0.85rem; }
+        .method.post { color: var(--success); }
+        .method.get { color: var(--primary); }
+        .path { color: var(--text-main); margin-left: 10px; }
+        .desc { color: var(--text-dim); margin-left: auto; font-family: 'Outfit'; font-size: 0.9rem; }
+
+        .task-card {
+            padding: 15px;
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            margin-bottom: 12px;
+            transition: all 0.3s ease;
+        }
+        .task-card:hover { border-color: var(--primary); background: rgba(88, 166, 255, 0.05); }
+        .task-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 5px; }
+        .difficulty { font-size: 0.75rem; text-transform: uppercase; font-weight: 700; }
+        .difficulty.easy { color: var(--success); }
+        .difficulty.medium { color: var(--warning); }
+        .difficulty.hard { color: var(--danger); }
+        .task-name { font-weight: 600; font-size: 1.1rem; }
+
+        .footer {
+            margin-top: 60px;
+            text-align: center;
+            color: var(--text-dim);
+            font-size: 0.9rem;
+        }
+        a { color: var(--primary); text-decoration: none; font-weight: 600; }
+        a:hover { text-decoration: underline; }
+
+        @media (max-width: 800px) {
+            .dashboard-grid { grid-template-columns: 1fr; }
+            h1 { font-size: 2.2rem; }
+        }
     </style>
 </head>
 <body>
-    <h1>SQL Schema Migration Agent</h1>
-    <p class="ok">Server running -- OpenEnv hackathon environment (7 tasks)</p>
-    <h2>API Endpoints</h2>
-    <pre>
-<span class="endpoint">POST /reset</span>   -- Start a new migration episode
-<span class="endpoint">POST /step</span>    -- Execute a SQL action
-<span class="endpoint">GET  /state</span>   -- Current environment state
-<span class="endpoint">GET  /tasks</span>   -- List all 7 tasks
-<span class="endpoint">POST /grader</span>  -- Run grader on all tasks
-<span class="endpoint">GET  /health</span>  -- Health check
-<span class="endpoint">GET  /docs</span>    -- Interactive API documentation
-    </pre>
-    <h2>Tasks (2 Easy / 3 Medium / 2 Hard)</h2>
-    <pre>
-<span class="easy">1. column-restructure      (Easy)   -- Merge first_name + last_name -> full_name</span>
-<span class="easy">2. soft-delete-restoration  (Easy)   -- Restore deleted products from deletion_log</span>
-<span class="medium">3. table-normalization      (Medium) -- Normalize purchases -> customers + orders + FK</span>
-<span class="medium">4. schema-version-merge     (Medium) -- Merge v1/v2 product tables with coercion</span>
-<span class="medium">5. multi-entity-extraction  (Medium) -- 3NF decomposition with invalid data routing</span>
-<span class="hard">6. cascade-migration        (Hard)   -- 4-table FK cascade, type coercion, orphan audit</span>
-<span class="hard">7. dual-source-consolidation(Hard)   -- 6->4 table merge, cross-system email dedup</span>
-    </pre>
-    <p><a href="/docs">Open API Docs</a> | <a href="/tasks">View Tasks</a> | <a href="/health">Health Check</a></p>
+    <div class="background-blob"></div>
+    <div class="container">
+        <header>
+            <h1>SQL Migration Agent</h1>
+            <p style="color: var(--text-dim); font-size: 1.2rem;">Production-Grade OpenEnv Benchmark Suite</p>
+            <span class="badge">● Online & Compliant</span>
+        </header>
+
+        <div class="dashboard-grid">
+            <div class="left-col">
+                <div class="card">
+                    <h2>Core Endpoints</h2>
+                    <div class="endpoint-list">
+                        <div class="endpoint-item"><span class="method post">POST</span> <span class="path">/reset</span> <span class="desc">Initialize task state</span></div>
+                        <div class="endpoint-item"><span class="method post">POST</span> <span class="path">/step</span>  <span class="desc">Execute SQL agent action</span></div>
+                        <div class="endpoint-item"><span class="method get">GET</span>  <span class="path">/state</span> <span class="desc">Current episode status</span></div>
+                        <div class="endpoint-item"><span class="method get">GET</span>  <span class="path">/tasks</span> <span class="desc">List benchmark tasks</span></div>
+                        <div class="endpoint-item"><span class="method post">POST</span> <span class="path">/grader</span><span class="desc">Run golden-DB comparison</span></div>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h2>Benchmark Features</h2>
+                    <p style="color: var(--text-dim); margin-bottom: 20px;">
+                        This environment provides high-fidelity SQLite migration tasks designed to pressure-test schema decomposition, 
+                        type coercion, and data integrity handling in LLMs.
+                    </p>
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+                        <div>
+                            <strong style="color: var(--primary);">✔ Dynamic Grader</strong>
+                            <p style="font-size: 0.85rem; color: var(--text-dim);">Seed-independent golden-DB logic.</p>
+                        </div>
+                        <div>
+                            <strong style="color: var(--primary);">✔ ERD Viz</strong>
+                            <p style="font-size: 0.85rem; color: var(--text-dim);">Real-time Mermaid diagrams.</p>
+                        </div>
+                        <div>
+                            <strong style="color: var(--primary);">✔ Anti-Exploit</strong>
+                            <p style="font-size: 0.85rem; color: var(--text-dim);">PRAGMA & dialect blacklisting.</p>
+                        </div>
+                        <div>
+                            <strong style="color: var(--primary);">✔ Tx Aware</strong>
+                            <p style="font-size: 0.85rem; color: var(--text-dim);">Supports BEGIN/COMMIT blocks.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="right-col">
+                <div class="card">
+                    <h2>Assessment Tasks</h2>
+                    <div class="task-card">
+                        <div class="task-header"><span class="difficulty easy">Easy</span> <span class="task-name">Column Merge</span></div>
+                        <p style="font-size: 0.85rem; color: var(--text-dim);">Merge name fields with apostrophe preservation.</p>
+                    </div>
+                    <div class="task-card">
+                        <div class="task-header"><span class="difficulty medium">Medium</span> <span class="task-name">Normalization</span></div>
+                        <p style="font-size: 0.85rem; color: var(--text-dim);">Decompose god-table into 3NF schema.</p>
+                    </div>
+                    <div class="task-card">
+                        <div class="task-header"><span class="difficulty hard">Hard</span> <span class="task-name">Cascade Sync</span></div>
+                        <p style="font-size: 0.85rem; color: var(--text-dim);">Multi-table FK cascade with audit logging.</p>
+                    </div>
+                    <div style="text-align: center; margin-top: 20px;">
+                        <a href="/tasks">View all 7 tasks →</a>
+                    </div>
+                </div>
+
+                <div class="card">
+                    <h2>Developer Info</h2>
+                    <p style="font-size: 0.9rem;">
+                        <strong>Engine:</strong> OpenEnv v1.0<br>
+                        <strong>Dialect:</strong> SQLite 3.x<br>
+                        <strong>Port:</strong> 7860
+                    </p>
+                    <hr style="border: none; border-top: 1px solid var(--border); margin: 15px 0;">
+                    <a href="/docs" target="_blank">📚 Swagger API Docs</a>
+                </div>
+            </div>
+        </div>
+
+        <div class="footer">
+            Built for the OpenEnv Hackathon &copy; 2026. <br>
+            <a href="https://github.com/Eishaan-Khatri/sql-migration-env" target="_blank">Source Code on GitHub</a>
+        </div>
+    </div>
 </body>
 </html>"""
 

@@ -98,6 +98,10 @@ class MigrationObservation(Observation):
         default=None,
         description="Human-readable diff between current and expected target schemas"
     )
+    erd_visualization: Optional[str] = Field(
+        default=None,
+        description="Mermaid.js erDiagram representation of the current database structure"
+    )
 
 
 class MigrationState(State):
