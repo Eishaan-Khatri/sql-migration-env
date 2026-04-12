@@ -225,16 +225,16 @@ async def root():
                             <p style="font-size: 0.85rem; color: var(--text-dim);">Seed-independent golden-DB logic.</p>
                         </div>
                         <div>
+                            <strong style="color: var(--primary);">✔ Efficiency Metrics</strong>
+                            <p style="font-size: 0.85rem; color: var(--text-dim);">Tracks Query Ops & Latency.</p>
+                        </div>
+                        <div>
                             <strong style="color: var(--primary);">✔ ERD Viz</strong>
                             <p style="font-size: 0.85rem; color: var(--text-dim);">Real-time Mermaid diagrams.</p>
                         </div>
                         <div>
                             <strong style="color: var(--primary);">✔ Anti-Exploit</strong>
                             <p style="font-size: 0.85rem; color: var(--text-dim);">PRAGMA & dialect blacklisting.</p>
-                        </div>
-                        <div>
-                            <strong style="color: var(--primary);">✔ Tx Aware</strong>
-                            <p style="font-size: 0.85rem; color: var(--text-dim);">Supports BEGIN/COMMIT blocks.</p>
                         </div>
                     </div>
                 </div>
@@ -255,8 +255,12 @@ async def root():
                         <div class="task-header"><span class="difficulty hard">Hard</span> <span class="task-name">Cascade Sync</span></div>
                         <p style="font-size: 0.85rem; color: var(--text-dim);">Multi-table FK cascade with audit logging.</p>
                     </div>
+                    <div class="task-card">
+                        <div class="task-header"><span class="difficulty" style="color: var(--accent);">Extreme</span> <span class="task-name">Data Poisoning</span></div>
+                        <p style="font-size: 0.85rem; color: var(--text-dim);">Quarantine poisoned staging data with strict schema integrity.</p>
+                    </div>
                     <div style="text-align: center; margin-top: 20px;">
-                        <a href="/tasks">View all 7 tasks →</a>
+                        <a href="/tasks">View all 8 tasks →</a>
                     </div>
                 </div>
 
