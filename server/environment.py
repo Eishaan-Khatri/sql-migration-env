@@ -18,6 +18,7 @@ import re
 import sqlite3
 import threading
 import uuid
+import difflib
 from typing import Any, Dict, List, Optional
 
 # Support both in-repo and standalone imports
@@ -145,11 +146,23 @@ class DbMigrationEnvironment(Environment):
                 return None, "Error: Query exceeded execution time limit (possible infinite loop). Simplify your query."
             return None, str(e)
         except sqlite3.Warning as e:
-            return None, (
-                f"Error: SQLite requires one statement per step. "
-                f"Split your commands into separate steps. Original error: {e}"
-            )
+            # Multi-statement fallback
+            try:
+                self._conn.executescript(sql)
+                return None, None
+            except Exception as script_e:
+                return None, f"Error (Multi-Statement Fallback Failed): {script_e}. Original error: {e}"
+        except sqlite3.OperationalError as e:
+            err_str = str(e).lower()
+            if "table" in err_str and "already exists" in err_str:
+                return None, f"Schema Error: {e}. You must DROP the old table first if replacing it."
+            if "has no column" in err_str:
+                return None, f"Schema Error: {e}. Check table columns."
+            return None, str(e)
         except Exception as e:
+            err_str = str(e).lower()
+            if "values for" in err_str and "columns" in err_str:
+                return None, f"Data Error: {e}. Ensure you are inserting the correct number of columns."
             return None, str(e)
         finally:
             self._conn.set_progress_handler(None, 0)
@@ -214,8 +227,11 @@ class DbMigrationEnvironment(Environment):
             self._conn = None
 
         # Create fresh in-memory database
-        self._conn = sqlite3.connect(":memory:")
+        self._conn = sqlite3.connect(":memory:", isolation_level=None)
 
+        # Performance PRAGMAs for Docker I/O
+        self._conn.execute("PRAGMA journal_mode = MEMORY")
+        
         # CRITICAL: Enable foreign key enforcement
         self._conn.execute("PRAGMA foreign_keys = ON")
 
@@ -239,16 +255,28 @@ class DbMigrationEnvironment(Environment):
 
         # Compute initial score
         initial_score = self._reconciler.score(self._conn)
+        self._state.migration_progress = initial_score
+
+        current_ddl = self._get_current_schema()
+        target_ddl = self._task_config["target_ddl"]
+        diff = "\n".join(difflib.unified_diff(
+            current_ddl.splitlines(),
+            target_ddl.splitlines(),
+            fromfile="current_schema",
+            tofile="target_schema",
+            lineterm=""
+        ))
 
         return MigrationObservation(
             done=False,
             reward=0.0,
-            current_schema_sql=self._get_current_schema(),
-            target_schema_sql=self._task_config["target_ddl"],
+            current_schema_sql=current_ddl,
+            target_schema_sql=target_ddl,
             last_execution_result="Environment initialized. Ready for migration.",
             step_number=0,
             migration_progress=initial_score,
             task_name=self.task_name,
+            schema_diff=diff if diff else "Schemas match exactly.",
             metadata={"status": "ready"},
         )
 
@@ -289,7 +317,11 @@ class DbMigrationEnvironment(Environment):
         sql_command = action.sql_command.strip()
 
         # --- A3: Dangerous SQL Blacklist ---
-        if _DANGEROUS_PATTERNS.search(sql_command):
+        sql_lower = sql_command.lower()
+        if "pragma" in sql_lower and "foreign_keys" in sql_lower and "off" in sql_lower:
+            execution_result = "Security Error: Disabling PRAGMA foreign_keys is strictly explicitly forbidden."
+            action_error = "pragma_off_blocked"
+        elif _DANGEROUS_PATTERNS.search(sql_command):
             execution_result = (
                 "Error: This SQL command is not allowed for security reasons. "
                 "ATTACH DATABASE, DETACH DATABASE, LOAD_EXTENSION, and "
@@ -342,9 +374,9 @@ class DbMigrationEnvironment(Environment):
                     if self._is_read_query(sql_command):
                         execution_result = self._format_query_results(cursor)
                     else:
-                        rows_affected = cursor.rowcount
-                        execution_result = f"Success: {rows_affected} rows affected"
-                        # Only auto-commit if not in explicit transaction (A4)
+                        rows_affected = getattr(cursor, "rowcount", -1) if cursor else -1
+                        execution_result = f"Success: Action executed. Rows affected: {rows_affected}"
+                        # Try to auto-commit
                         if not self._in_explicit_tx:
                             try:
                                 self._conn.commit()
@@ -384,19 +416,29 @@ class DbMigrationEnvironment(Environment):
         if done:
             meta["trajectory"] = self._trajectory
 
+        current_ddl = self._get_current_schema()
+        target_ddl = self._task_config["target_ddl"]
+        diff = "\n".join(difflib.unified_diff(
+            current_ddl.splitlines(),
+            target_ddl.splitlines(),
+            fromfile="current_schema",
+            tofile="target_schema",
+            lineterm=""
+        ))
+
         return MigrationObservation(
             done=done,
             reward=step_reward,
-            current_schema_sql=self._get_current_schema(),
-            target_schema_sql=self._task_config["target_ddl"],
+            current_schema_sql=current_ddl,
+            target_schema_sql=target_ddl,
             last_execution_result=execution_result,
             step_number=self._step_count,
             migration_progress=current_score,
             task_name=self.task_name,
+            schema_diff=diff if diff else "Schemas match exactly.",
             metadata=meta,
         )
 
-    @property
     def state(self) -> MigrationState:
         """Get current environment state."""
         return self._state

@@ -9,9 +9,10 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy all project files
 COPY . .
 
-# Set Python path for imports
+# Set environment variables for docker and huggingface
 ENV PYTHONPATH="/app:$PYTHONPATH"
-
+ENV PYTHONUNBUFFERED=1
+ENV PORT=7860
 # Health check
 HEALTHCHECK --interval=30s --timeout=3s --start-period=10s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:7860/health')" || exit 1

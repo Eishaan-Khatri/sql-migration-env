@@ -50,17 +50,18 @@ CRITICAL SQLite-specific rules (violations cause immediate errors):
 2. To change column types, add NOT NULL, or add FKs: CREATE new table, INSERT INTO new SELECT FROM old, DROP old, RENAME new.
 3. Apostrophes in data (O'Brien, O'Neill) are present — escape with '' in string literals.
 4. Execute exactly ONE SQL statement per step.
-5. For table normalization: create new tables first, INSERT INTO ... SELECT, then drop old tables.
-6. For orphaned FK rows: check the TARGET SCHEMA for the correct anomaly/issues table name (it varies per task). Log invalid records there before dropping.
-7. For text currency columns like '$90,000' or '$1,234.56': strip '$' and ',' then cast to the type in the target schema (INTEGER for whole numbers, REAL for decimals).
-8. IMPORTANT: Before writing any DDL, execute SELECT * FROM tablename LIMIT 5 for each source table to inspect the actual data format and identify edge cases like empty strings, leading whitespace, NULL values, and special characters.
-9. Do NOT set submit_final to true until you have run SELECT COUNT(*) on your target tables and verified the counts and data match what the task requires.
-10. When migration is complete and verified, set submit_final to true.
+5. If a table already exists, you MUST drop it before recreating it (e.g., DROP TABLE IF EXISTS users_new).
+6. SQLite strictly expects `INSERT INTO tbl VALUES (...)`, not `VALUE (...)`. Ensure column counts match exactly.
+7. For table normalization: create new tables first, INSERT INTO ... SELECT, then drop old tables.
+8. For orphaned FK rows: check the TARGET SCHEMA for the anomaly/issues table name. Log invalid records there before dropping.
+9. For text currency (e.g. '$90,000'): strip '$' and ',' then cast to the target type (INTEGER/REAL).
+10. IMPORTANT: Before writing any DDL, execute SELECT * FROM tablename LIMIT 5 to inspect the data format.
+11. Do NOT set submit_final to true until you run SELECT COUNT(*) and verify data matches the task.
 
 TARGET SCHEMA (achieve this exactly):
 {target_ddl}
 
-Respond ONLY with valid JSON — no markdown, no code blocks, no text outside the object:
+Respond ONLY with a valid JSON object. Do not use markdown backticks (```json). No conversational text.
 {{"sql_command": "your SQL here", "reasoning": "why", "submit_final": false}}"""
 
 ALL_TASKS = [
@@ -74,6 +75,26 @@ ALL_TASKS = [
 ]
 MAX_PARSE_ERRORS = 5  # Consecutive parse errors before giving up
 AUTO_SUBMIT_THRESHOLD = 0.95
+MAX_HISTORY_PAIRS = 4  # Keep maximum of 4 user/assistant turn pairs
+
+
+def build_messages(system_prompt: str, history: list, current_obs_msg: dict) -> list:
+    """
+    Build messages explicitly pruning history to avoid context bloat.
+    """
+    system_msg = [{"role": "system", "content": system_prompt}]
+    
+    # We only want assistant/user pairs. Filter out system msgs if any exist in history
+    filtered_history = [m for m in history if m["role"] != "system"]
+    
+    # Keep only the last MAX_HISTORY_PAIRS * 2 messages
+    max_msgs = MAX_HISTORY_PAIRS * 2
+    if len(filtered_history) > max_msgs:
+        pruned_history = filtered_history[-max_msgs:]
+    else:
+        pruned_history = filtered_history
+        
+    return system_msg + pruned_history + [current_obs_msg]
 
 
 def call_llm(messages: list, timeout: int = 90) -> str:
@@ -186,13 +207,16 @@ def run_task_local(task_name: str) -> dict:
     history = [{"role": "system", "content": task_system_prompt}]
 
     # Initial observation
-    initial_msg = (
-        f"CURRENT DATABASE SCHEMA:\n{obs.current_schema_sql}\n\n"
-        f"Status: {obs.last_execution_result}\n"
-        f"Migration progress: {obs.migration_progress:.2f}\n\n"
-        f"Start by inspecting the source data with SELECT queries, then begin the migration."
-    )
-    history.append({"role": "user", "content": initial_msg})
+    initial_msg = {
+        "role": "user",
+        "content": (
+            f"CURRENT DATABASE SCHEMA:\n{obs.current_schema_sql}\n\n"
+            f"Status: {obs.last_execution_result}\n"
+            f"Migration progress: {obs.migration_progress:.2f}\n\n"
+            f"Start by inspecting the source data with SELECT queries, then begin the migration."
+        )
+    }
+    history = []
 
     rewards_list = []
     consecutive_parse_errors = 0  # D6: Track consecutive only
@@ -204,8 +228,8 @@ def run_task_local(task_name: str) -> dict:
         if done:
             break
 
-        # --- D5: Context window fix — only keep last 10 messages + system ---
-        messages = [history[0]] + history[-10:]
+        # --- D5: Context window fix: Aggressively prune history via build_messages ---
+        messages = build_messages(task_system_prompt, history, initial_msg)
 
         try:
             raw_response = call_llm(messages)
@@ -226,11 +250,21 @@ def run_task_local(task_name: str) -> dict:
                 print(f"[STEP] step={step+1} action=MAX_PARSE_ERRORS reward=0.00 done=true error=too_many_consecutive_parse_errors", flush=True)
                 done = True
                 break
-            history.append({"role": "assistant", "content": raw_response})
-            history.append({
+            
+            # CRITICAL: Strip <think> tags before appending to history to prevent 413 Context OOM
+            stripped_response = re.sub(r"<think>.*?</think>", "", raw_response, flags=re.DOTALL).strip()
+            stripped_response = re.sub(r"<think>.*$", "", stripped_response, flags=re.DOTALL).strip()
+            # If it's still huge, truncate it to 500 chars to save context
+            if len(stripped_response) > 500:
+                stripped_response = stripped_response[:500] + "... [TRUNCATED DUE TO PARSE ERROR]"
+                
+            history.append(initial_msg)  # The prompt we sent
+            history.append({"role": "assistant", "content": stripped_response}) # The stripped response
+            
+            initial_msg = {
                 "role": "user",
-                "content": 'ERROR: Your response was not valid JSON. Respond ONLY with: {"sql_command": "...", "reasoning": "...", "submit_final": false}',
-            })
+                "content": 'ERROR: Your response was not a valid JSON object. Do not use markdown blocks. Respond strictly with: {"sql_command": "...", "reasoning": "...", "submit_final": false}'
+            }
             continue
 
         # Build the MigrationAction
@@ -278,24 +312,26 @@ def run_task_local(task_name: str) -> dict:
         )
 
         # Add to conversation history
+        history.append(initial_msg)
         history.append({"role": "assistant", "content": json.dumps(action_dict)})
 
         # --- D5: Lean feedback — NO schema repetition ---
-        feedback_msg = (
+        feedback_text = (
             f"EXECUTION RESULT: {obs.last_execution_result}\n"
             f"Progress: {obs.migration_progress:.2f}"
+            f"\nSchema Diff (Missing/Extra constraints vs Target):\n{obs.schema_diff}"
         )
         if done:
-            feedback_msg += "\n\nEpisode complete."
+            feedback_text += "\n\nEpisode complete."
         elif obs.migration_progress >= 0.9:
-            feedback_msg += (
+            feedback_text += (
                 "\n\nMigration is nearly complete! Run SELECT COUNT(*) on each table "
                 "and compare to your expectations. If everything matches, set submit_final to true."
             )
         else:
-            feedback_msg += "\n\nContinue the migration. Write your next SQL command."
+            feedback_text += "\n\nContinue the migration. Write your next SQL command."
 
-        history.append({"role": "user", "content": feedback_msg})
+        initial_msg = {"role": "user", "content": feedback_text}
 
     # Print END
     rewards_str = ",".join(f"{r:.2f}" for r in rewards_list) if rewards_list else "0.00"

@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import Any, Dict, Optional
 
 from openenv.core.env_server.types import Action, Observation, State
-from pydantic import Field
+from pydantic import Field, field_validator
 
 
 class MigrationAction(Action):
@@ -40,6 +40,11 @@ class MigrationAction(Action):
         description="Set to true when you believe the migration is complete"
     )
 
+    @field_validator("sql_command")
+    @classmethod
+    def strip_whitespace(cls, v: str) -> str:
+        return v.strip()
+
 
 class MigrationObservation(Observation):
     """
@@ -60,6 +65,7 @@ class MigrationObservation(Observation):
         step_number: Current step count (0 after reset, increments each step).
         migration_progress: Current grader score from 0.0 to 1.0.
         task_name: Name of the current task being attempted.
+        schema_diff: Human-readable diff between current and target schemas.
     """
 
     current_schema_sql: str = Field(
@@ -87,6 +93,10 @@ class MigrationObservation(Observation):
     task_name: str = Field(
         default="",
         description="Name of the current task"
+    )
+    schema_diff: Optional[str] = Field(
+        default=None,
+        description="Human-readable diff between current and expected target schemas"
     )
 
 

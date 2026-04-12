@@ -128,6 +128,11 @@ async def list_tasks() -> Dict[str, Any]:
             "reasoning": "string -- Explanation of the action (optional)",
             "submit_final": "boolean -- Set true when migration is complete (default: false)",
         },
+        "example_action": {
+            "sql_command": "CREATE TABLE ...",
+            "reasoning": "Creating the new destination table before copying data.",
+            "submit_final": False
+        }
     }
 
 
@@ -170,6 +175,7 @@ async def grade_task(
             }
 
     return {
+        "grader_version": "1.0",
         "tasks": results,
         "status": "graded",
     }
