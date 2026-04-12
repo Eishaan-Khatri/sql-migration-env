@@ -68,10 +68,10 @@ Tested deterministically via `inference.py` on default seeds:
 | `column-restructure` | 0.99 | 4-5 |
 | `soft-delete-restoration` | 0.99 | 5-7 |
 | `table-normalization` | 0.99 | 8-10 |
-| `schema-version-merge` | 0.99 | 9-11 |
-| `multi-entity-extraction` | 0.99 | 10-12 |
-| `cascade-migration` | 0.99 | 13-15 |
-| `dual-source-consolidation`| 0.99 | 15-18 |
+| `schema-version-merge` | 0.93 | 9-11 |
+| `multi-entity-extraction` | 0.50 | 10-12 |
+| `cascade-migration` | 0.83 | 13-15 |
+| `dual-source-consolidation`| 0.28 | 15-18 |
 
 ## Dynamic Golden Database Grading
 
