@@ -9,6 +9,8 @@ pinned: false
 ---
 
 # SQL Migration Agent Benchmark (OpenEnv)
+![Badge](https://hitscounter.dev/api/hit?url=https%3A%2F%2Fgithub.com%2FEishaan-Khatri%2Fsql-migration-env&label=Visits&icon=github&color=%23198754&message=&style=flat&tz=UTC)
+
 > **A Production-Grade Evaluation Suite for Database Engineering Agents.**
 
 [![OpenEnv Compliant](https://img.shields.io/badge/OpenEnv-Compliant-success)](https://github.com/openenv/core)
