@@ -1,0 +1,628 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SQL Migration Agent Benchmark — OpenEnv Evaluation Suite</title>
+    <meta name="description" content="A production-grade evaluation suite for database engineering AI agents. 8 adversarial SQLite migration tasks with dynamic golden-DB grading, live ERD visualization, and anti-exploit sandboxing.">
+    <link rel="icon" href="logo.png" type="image/png">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- ═══════════════ NAVIGATION ═══════════════ -->
+<nav class="navbar" id="navbar">
+    <a class="nav-brand" href="#">
+        <img src="logo.png" alt="Logo">
+        <span>SQL Migration Bench</span>
+    </a>
+    <ul class="nav-links">
+        <li><a href="#architecture">Architecture</a></li>
+        <li><a href="#tasks">Tasks</a></li>
+        <li><a href="#performance">Performance</a></li>
+        <li><a href="#security">Security</a></li>
+        <li><a href="#docs">Docs</a></li>
+        <li><a href="#try-it">Try It</a></li>
+    </ul>
+    <div class="nav-cta">
+        <a href="https://github.com/Eishaan-Khatri/sql-migration-env" target="_blank" class="btn btn-outline">⭐ GitHub</a>
+        <a href="https://huggingface.co/spaces/Eishaan/sql-migration-env" target="_blank" class="btn btn-primary">🤗 HF Space</a>
+    </div>
+    <button class="hamburger" aria-label="Menu">☰</button>
+</nav>
+
+<!-- ═══════════════ HERO ═══════════════ -->
+<section class="hero" id="hero">
+    <div class="hero-bg">
+        <div class="orb orb-1"></div>
+        <div class="orb orb-2"></div>
+        <div class="orb orb-3"></div>
+    </div>
+    <div class="hero-content">
+        <div class="hero-badge">✓ OpenEnv Compliant · Validated & Deployed</div>
+        <h1>
+            A Production-Grade<br>
+            <span class="gradient-text">Evaluation Suite</span><br>
+            for Database Engineering<br>AI Agents.
+        </h1>
+        <p class="hero-subtitle">
+            8 adversarial SQLite migration tasks with dynamic golden-database grading,
+            live ERD visualization, efficiency metrics, and anti-exploit sandboxing.
+        </p>
+
+        <div class="hero-stats">
+            <div class="stat-item">
+                <div class="stat-value" data-count="8">0</div>
+                <div class="stat-label">Migration Tasks</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-value" data-count="500000">0</div>
+                <div class="stat-label">VM Op Limit</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-value">10⁻⁷</div>
+                <div class="stat-label">Float Tolerance</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-value" data-count="7860">0</div>
+                <div class="stat-label">Default Port</div>
+            </div>
+        </div>
+
+        <div class="hero-buttons">
+            <a href="https://github.com/Eishaan-Khatri/sql-migration-env" target="_blank" class="btn btn-primary">📂 View on GitHub</a>
+            <a href="https://huggingface.co/spaces/Eishaan/sql-migration-env" target="_blank" class="btn btn-outline">🤗 Live API Demo</a>
+            <a href="#docs" class="btn btn-outline">📚 Documentation</a>
+        </div>
+
+        <div class="hackathon-credit">
+            <span>Built for the Meta PyTorch OpenEnv Hackathon 2026</span>
+            <span>·</span>
+            <span>by Eishaan Khatri</span>
+        </div>
+    </div>
+</section>
+
+<!-- ═══════════════ ARCHITECTURE ═══════════════ -->
+<section class="section" id="architecture">
+    <div class="section-header reveal">
+        <div class="section-label">System Architecture</div>
+        <h2 class="section-title">How It Works Under the Hood</h2>
+        <p class="section-desc">A modular, three-tier architecture combining an isolated SQLite sandbox, a dynamic golden-database grader, and a standards-compliant OpenEnv API server.</p>
+    </div>
+
+    <div class="arch-grid">
+        <div class="card arch-card arch-card-full reveal">
+            <div class="arch-icon">🔄</div>
+            <h3>Agent ↔ Environment Protocol Flow</h3>
+            <div class="code-block">
+                <button class="copy-btn">Copy</button>
+<pre>
+┌─────────────────────────────────────┐
+│  inference.py (Baseline Agent)      │      ┌──────────────────────────┐
+│  ├── OpenAI-compatible LLM client   │      │  seeds.py                │
+│  ├── JSON mode + fallback parser    │      │  ├── 8 seed_fn() defs    │
+│  └── Auto-submit at score > 0.95    │      │  ├── 8 golden_fn() defs  │
+└──────────┬──────────────────────────┘      │  └── TASKS registry      │
+           │ POST /step                       └────────┬─────────────────┘
+           │ {sql_command, reasoning}                   │
+┌──────────▼──────────────────────────┐                │
+│  environment.py (OpenEnv Server)    │                │
+│  ├── SQL Blacklist (ATTACH/DETACH)  │                │
+│  ├── PRAGMA Safety Filter           │                │
+│  ├── VM Timeout (500k ops limit)    │                │
+│  ├── ERD Generator (Mermaid.js)     │                │
+│  └── Efficiency Tracker (ops + ms)  │                │
+└──────────┬──────────────────────────┘                │
+           │ score()                                    │
+┌──────────▼──────────────────────────┐                │
+│  grader.py (Golden DB Engine)       │◄───────────────┘
+│  ├── _build_golden_db() dynamically │      seeds.golden_fn()
+│  ├── Schema Signature Match (30%)   │
+│  ├── Row Data Match w/ ε=10⁻⁷ (40%)│
+│  ├── FK & Integrity Check (20%)     │
+│  └── Anti-Exploit Metric (10%)      │
+└─────────────────────────────────────┘
+</pre>
+            </div>
+        </div>
+
+        <div class="card arch-card reveal">
+            <div class="arch-icon">🧬</div>
+            <h3>Dynamic Golden Grader</h3>
+            <p>Instead of hardcoding expected outputs, the grader <strong>programmatically regenerates</strong> the perfect database state from golden migration functions in <code>seeds.py</code>. Change the seed data → the grader automatically recalibrates. Zero manual maintenance.</p>
+        </div>
+
+        <div class="card arch-card reveal">
+            <div class="arch-icon">📊</div>
+            <h3>Live ERD Visualization</h3>
+            <p>Every observation includes a <strong>Mermaid.js erDiagram</strong> dynamically parsed from <code>sqlite_master</code> and <code>PRAGMA foreign_key_list</code>. The agent can "see" the current table relationships at each step, enabling spatial reasoning about schema drift.</p>
+        </div>
+
+        <div class="card arch-card reveal">
+            <div class="arch-icon">⚡</div>
+            <h3>Efficiency Metrics</h3>
+            <p>Evaluates not just <em>correctness</em> but <em>computational cost</em>. Integrates SQLite's <code>sqlite3_progress_handler</code> to track <strong>VM instruction count</strong> (ops) and wall-clock <strong>execution_ms</strong> per query. Agents are graded on performance, not just outcomes.</p>
+        </div>
+
+        <div class="card arch-card reveal">
+            <div class="arch-icon">📜</div>
+            <h3>Pydantic Data Contract</h3>
+            <p>Formal API contract via <code>MigrationAction</code>, <code>MigrationObservation</code>, and <code>MigrationState</code> — all extending OpenEnv base types. Guarantees type safety, validation, and schema-level interoperability with any RL training framework.</p>
+        </div>
+    </div>
+</section>
+
+<!-- ═══════════════ REWARD FUNCTION ═══════════════ -->
+<section class="section" id="reward">
+    <div class="section-header reveal">
+        <div class="section-label">Scoring Engine</div>
+        <h2 class="section-title">The Reward Function</h2>
+        <p class="section-desc">A multi-dimensional, weighted composite score designed to prevent token-hacking and encourage genuine schema understanding.</p>
+    </div>
+
+    <div class="reward-formula reveal">
+        <div class="formula">R<sub>t</sub> = P<sub>t</sub> − P<sub>t−1</sub></div>
+        <p style="color: var(--text-dim); font-size: 0.95rem;">Where P<sub>t</sub> (Migration Progress) is a weighted composite bounded to [0.01, 0.99]:</p>
+    </div>
+
+    <div class="reward-weights">
+        <div class="card weight-card reveal">
+            <div class="weight-pct" style="color: var(--primary);">30%</div>
+            <h4>Schema Match</h4>
+            <p>Tables exist with exact (name, type, notnull, default) column signatures.</p>
+        </div>
+        <div class="card weight-card reveal">
+            <div class="weight-pct" style="color: var(--success);">40%</div>
+            <h4>Data Integrity</h4>
+            <p>Row content mapped against Golden DB with 10⁻⁷ float epsilon tolerance.</p>
+        </div>
+        <div class="card weight-card reveal">
+            <div class="weight-pct" style="color: var(--warning);">20%</div>
+            <h4>FK & Constraints</h4>
+            <p>Foreign keys enforced, PRAGMA integrity_check passes, no orphans.</p>
+        </div>
+        <div class="card weight-card reveal">
+            <div class="weight-pct" style="color: var(--danger);">10%</div>
+            <h4>Anti-Exploit</h4>
+            <p>Penalty for schema pollution, empty tables, or row bloating attacks.</p>
+        </div>
+    </div>
+</section>
+
+<!-- ═══════════════ TASKS ═══════════════ -->
+<section class="section" id="tasks">
+    <div class="section-header reveal">
+        <div class="section-label">Benchmark Registry</div>
+        <h2 class="section-title">8 Adversarial Migration Tasks</h2>
+        <p class="section-desc">A progressive curriculum from basic column merges to extreme data poisoning — each injecting real-world adversarial edge cases.</p>
+    </div>
+
+    <div class="tasks-grid">
+        <div class="card task-card reveal">
+            <div class="task-number">TASK 01</div>
+            <span class="task-difficulty easy">Easy</span>
+            <h3>Column Restructure</h3>
+            <p class="task-desc">Merge <code>first_name</code> + <code>last_name</code> into a single <code>full_name</code> column without data loss.</p>
+            <div class="task-edge">⚡ Edge: O'Brien — apostrophe escaping</div>
+        </div>
+
+        <div class="card task-card reveal">
+            <div class="task-number">TASK 02</div>
+            <span class="task-difficulty easy">Easy</span>
+            <h3>Soft-Delete Restoration</h3>
+            <p class="task-desc">Restore deleted products from a <code>deletion_log</code> table back into the active ledger with proper metadata.</p>
+            <div class="task-edge">⚡ Edge: stock=0 ≠ is_deleted</div>
+        </div>
+
+        <div class="card task-card reveal">
+            <div class="task-number">TASK 03</div>
+            <span class="task-difficulty medium">Medium</span>
+            <h3>Table Normalization</h3>
+            <p class="task-desc">Decompose flat <code>purchases</code> into strict 3NF: <code>customers</code> + <code>orders</code> with FK constraints.</p>
+            <div class="task-edge">⚡ Edge: alice@example.com ×3 — needs DISTINCT</div>
+        </div>
+
+        <div class="card task-card reveal">
+            <div class="task-number">TASK 04</div>
+            <span class="task-difficulty medium">Medium</span>
+            <h3>Schema Version Merge</h3>
+            <p class="task-desc">Reconcile v1/v2 product tables with ID collision logic (v2 wins) and <code>"$12.50"</code> TEXT→REAL coercion.</p>
+            <div class="task-edge">⚡ Edge: "$" price strings + NULL category</div>
+        </div>
+
+        <div class="card task-card reveal">
+            <div class="task-number">TASK 05</div>
+            <span class="task-difficulty medium">Medium</span>
+            <h3>Multi-Entity Extraction</h3>
+            <p class="task-desc">Full 3NF decomposition from a god-table into salespersons, customers, products, and sales with anomaly routing.</p>
+            <div class="task-edge">⚡ Edge: leading whitespace " alice@..."</div>
+        </div>
+
+        <div class="card task-card reveal">
+            <div class="task-number">TASK 06</div>
+            <span class="task-difficulty hard">Hard</span>
+            <h3>Cascade Migration</h3>
+            <p class="task-desc">4-table FK cascade rewrite with type coercion (<code>"$90,000"→90000</code>), NULL salary audit, and orphan detection.</p>
+            <div class="task-edge">⚡ Edge: employee_id=99 orphaned assets</div>
+        </div>
+
+        <div class="card task-card reveal">
+            <div class="task-number">TASK 07</div>
+            <span class="task-difficulty hard">Hard</span>
+            <h3>Dual-Source Consolidation</h3>
+            <p class="task-desc">Merge 6 tables from Legacy CRM + Modern SaaS with cross-system email dedup and complex state/tier mapping.</p>
+            <div class="task-edge">⚡ Edge: NULL currency → default 'USD'</div>
+        </div>
+
+        <div class="card task-card extreme-highlight reveal">
+            <div class="task-number">TASK 08</div>
+            <span class="task-difficulty extreme">🔥 Extreme</span>
+            <h3>Data Poisoning & Quarantine</h3>
+            <p class="task-desc">The ultimate stress test. Migrate inventory from a <strong>poisoned staging table</strong> containing <code>"N/A"</code>, <code>"INVALID"</code>, <code>"$ 12.50"</code>, and leading whitespace. Cleanse valid rows and route un-coerceable records to an isolation quarantine table.</p>
+            <div class="task-edge">⚡ Edge: "N/A" and "INVALID" in cost column</div>
+        </div>
+    </div>
+</section>
+
+<!-- ═══════════════ PERFORMANCE ═══════════════ -->
+<section class="section" id="performance">
+    <div class="section-header reveal">
+        <div class="section-label">Empirical Results</div>
+        <h2 class="section-title">Baseline Model Performance</h2>
+        <p class="section-desc">Frontier models systematically fail on Hard and Extreme tasks, validating the benchmark's discriminative power.</p>
+    </div>
+
+    <div class="card reveal" style="overflow-x: auto;">
+        <table class="perf-table">
+            <thead>
+                <tr>
+                    <th>Task</th>
+                    <th>Difficulty</th>
+                    <th>Qwen 32B</th>
+                    <th>GPT-OSS 120B</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>column-restructure</td>
+                    <td><span class="task-difficulty easy" style="font-size:0.65rem;">Easy</span></td>
+                    <td><span class="score-bar" data-width="99" style="width:0;min-width:4px;"></span><span class="score-text">0.99</span></td>
+                    <td><span class="score-bar" data-width="99" style="width:0;min-width:4px;"></span><span class="score-text">0.99</span></td>
+                </tr>
+                <tr>
+                    <td>soft-delete-restoration</td>
+                    <td><span class="task-difficulty easy" style="font-size:0.65rem;">Easy</span></td>
+                    <td><span class="score-bar" data-width="99" style="width:0;min-width:4px;"></span><span class="score-text">0.99</span></td>
+                    <td><span class="score-bar" data-width="99" style="width:0;min-width:4px;"></span><span class="score-text">0.99</span></td>
+                </tr>
+                <tr>
+                    <td>table-normalization</td>
+                    <td><span class="task-difficulty medium" style="font-size:0.65rem;">Medium</span></td>
+                    <td><span class="score-bar" data-width="94" style="width:0;min-width:4px;"></span><span class="score-text">0.94</span></td>
+                    <td><span class="score-bar" data-width="99" style="width:0;min-width:4px;"></span><span class="score-text">0.99</span></td>
+                </tr>
+                <tr>
+                    <td>schema-version-merge</td>
+                    <td><span class="task-difficulty medium" style="font-size:0.65rem;">Medium</span></td>
+                    <td><span class="score-bar" data-width="93" style="width:0;min-width:4px;"></span><span class="score-text">0.93</span></td>
+                    <td><span class="score-bar" data-width="98" style="width:0;min-width:4px;"></span><span class="score-text">0.98</span></td>
+                </tr>
+                <tr>
+                    <td>multi-entity-extraction</td>
+                    <td><span class="task-difficulty medium" style="font-size:0.65rem;">Medium</span></td>
+                    <td><span class="score-bar" data-width="35" style="width:0;min-width:4px;"></span><span class="score-text">0.35</span></td>
+                    <td><span class="score-bar" data-width="65" style="width:0;min-width:4px;"></span><span class="score-text">0.65</span></td>
+                </tr>
+                <tr>
+                    <td>cascade-migration</td>
+                    <td><span class="task-difficulty hard" style="font-size:0.65rem;">Hard</span></td>
+                    <td><span class="score-bar" data-width="61" style="width:0;min-width:4px;"></span><span class="score-text">0.61</span></td>
+                    <td><span class="score-bar" data-width="83" style="width:0;min-width:4px;"></span><span class="score-text">0.83</span></td>
+                </tr>
+                <tr>
+                    <td>dual-source-consolidation</td>
+                    <td><span class="task-difficulty hard" style="font-size:0.65rem;">Hard</span></td>
+                    <td><span class="score-bar" data-width="28" style="width:0;min-width:4px;"></span><span class="score-text">0.28</span></td>
+                    <td><span class="score-bar" data-width="38" style="width:0;min-width:4px;"></span><span class="score-text">0.38</span></td>
+                </tr>
+                <tr style="background: rgba(188,140,255,0.04);">
+                    <td style="color: var(--extreme); font-weight: 700;">data-poisoning-quarantine</td>
+                    <td><span class="task-difficulty extreme" style="font-size:0.65rem;">Extreme</span></td>
+                    <td><span class="score-bar" data-width="2" style="width:0;min-width:4px; background: var(--extreme);"></span><span class="score-text" style="color: var(--extreme);">0.02</span></td>
+                    <td><span class="score-bar" data-width="15" style="width:0;min-width:4px; background: var(--extreme);"></span><span class="score-text" style="color: var(--extreme);">0.15</span></td>
+                </tr>
+            </tbody>
+        </table>
+    </div>
+
+    <div class="card reveal" style="margin-top: 24px; border-color: rgba(188,140,255,0.2); background: rgba(188,140,255,0.03);">
+        <p style="color: var(--extreme); font-weight: 600; margin-bottom: 8px;">⚠️ Key Finding</p>
+        <p style="color: var(--text-dim); font-size: 0.95rem;">State-of-the-art frontier models score below 15% on the Extreme Data Poisoning task, revealing a systematic weakness in LLM database engineering: <strong>models cannot reliably detect and partition corrupt data patterns at source.</strong> This provides a vast ceiling for future RL exploration.</p>
+    </div>
+</section>
+
+<!-- ═══════════════ SECURITY ═══════════════ -->
+<section class="section" id="security">
+    <div class="section-header reveal">
+        <div class="section-label">Adversarial Hardening</div>
+        <h2 class="section-title">Security & Anti-Exploit System</h2>
+        <p class="section-desc">A multi-layered defense preventing agents from gaming the benchmark or escaping the sandbox.</p>
+    </div>
+
+    <div class="security-grid">
+        <div class="card reveal">
+            <h3 style="margin-bottom: 12px;">🚫 SQL Blacklist Regex</h3>
+            <p style="color: var(--text-dim); font-size: 0.9rem; margin-bottom: 16px;">Prevents agents from escaping the sandbox via filesystem-level database access or dangerous PRAGMA modifications.</p>
+            <div class="code-block">
+                <button class="copy-btn">Copy</button>
+<pre>_DANGEROUS_PATTERNS = re.compile(
+    r"\b(ATTACH\s+DATABASE|DETACH\s+DATABASE"
+    r"|LOAD_EXTENSION)\b"
+    r"|PRAGMA\s+writable_schema",
+    re.IGNORECASE,
+)</pre>
+            </div>
+        </div>
+
+        <div class="card reveal">
+            <h3 style="margin-bottom: 12px;">⏱ VM Instruction Counter</h3>
+            <p style="color: var(--text-dim); font-size: 0.9rem; margin-bottom: 16px;">SQLite's <code>progress_handler</code> terminates queries exceeding 500,000 VM operations. Prevents infinite CTEs and recursive attacks.</p>
+            <div class="code-block">
+                <button class="copy-btn">Copy</button>
+<pre>_MAX_OPS = 500_000
+
+def _progress_callback():
+    ops_count[0] += 1
+    if ops_count[0] > _MAX_OPS:
+        return 1  # Non-zero = abort
+    return 0
+
+conn.set_progress_handler(
+    _progress_callback, 1000
+)</pre>
+            </div>
+        </div>
+
+        <div class="card reveal">
+            <h3 style="margin-bottom: 12px;">🔒 PRAGMA State Preservation</h3>
+            <p style="color: var(--text-dim); font-size: 0.9rem;">The grader carefully saves and restores the agent's <code>foreign_keys</code> PRAGMA state before scoring, preventing the grading engine itself from corrupting the database being evaluated. This guarantees scoring isolation.</p>
+        </div>
+
+        <div class="card reveal">
+            <h3 style="margin-bottom: 12px;">🧪 Row Bloat Detection</h3>
+            <p style="color: var(--text-dim); font-size: 0.9rem;">Applies a 1% penalty per extra row above the golden expected count. Prevents agents from "guessing" by dumping all possible data combinations. Empty table exploitation is also detected and penalized.</p>
+        </div>
+    </div>
+</section>
+
+<!-- ═══════════════ DOCUMENTATION ═══════════════ -->
+<section class="section" id="docs">
+    <div class="section-header reveal">
+        <div class="section-label">Reference</div>
+        <h2 class="section-title">Documentation</h2>
+    </div>
+
+    <div class="card reveal">
+        <div class="docs-tabs">
+            <button class="docs-tab active" data-panel="panel-quickstart">Quick Start</button>
+            <button class="docs-tab" data-panel="panel-api">API Reference</button>
+            <button class="docs-tab" data-panel="panel-env">Environment Variables</button>
+            <button class="docs-tab" data-panel="panel-add-task">Adding Tasks</button>
+        </div>
+
+        <!-- Quick Start -->
+        <div class="docs-panel active" id="panel-quickstart">
+            <div class="code-block">
+                <button class="copy-btn">Copy</button>
+<pre># 1. Clone the repository
+git clone https://github.com/Eishaan-Khatri/sql-migration-env.git
+cd sql-migration-env
+
+# 2. Install dependencies
+pip install -r requirements.txt
+
+# 3. Start the OpenEnv Server
+python -m server.app
+# Server running at http://localhost:7860
+
+# 4. Configure credentials
+export HF_TOKEN="your_huggingface_token"
+export MODEL_NAME="Qwen/Qwen2.5-72B-Instruct"
+export API_BASE_URL="https://router.huggingface.co/v1"
+
+# 5. Run the baseline agent against all 8 tasks
+python inference.py
+
+# 6. Validate OpenEnv compliance
+openenv validate
+# [OK] sql_migration: Ready for multi-mode deployment</pre>
+            </div>
+        </div>
+
+        <!-- API Reference -->
+        <div class="docs-panel" id="panel-api">
+            <div class="api-endpoint">
+                <span class="api-method post">POST</span>
+                <span class="api-path">/reset</span>
+                <span class="api-desc">Seed a new migration episode with a given task_name</span>
+            </div>
+            <div class="api-endpoint">
+                <span class="api-method post">POST</span>
+                <span class="api-path">/step</span>
+                <span class="api-desc">Submit a MigrationAction (SQL + reasoning)</span>
+            </div>
+            <div class="api-endpoint">
+                <span class="api-method get">GET</span>
+                <span class="api-path">/state</span>
+                <span class="api-desc">Get current MigrationState (score, step, episode_id)</span>
+            </div>
+            <div class="api-endpoint">
+                <span class="api-method get">GET</span>
+                <span class="api-path">/tasks</span>
+                <span class="api-desc">List all 8 registered tasks with difficulty metadata</span>
+            </div>
+            <div class="api-endpoint">
+                <span class="api-method post">POST</span>
+                <span class="api-path">/grader</span>
+                <span class="api-desc">Invoke the Golden DB grader for specific or all tasks</span>
+            </div>
+            <div class="api-endpoint">
+                <span class="api-method post">POST</span>
+                <span class="api-path">/baseline</span>
+                <span class="api-desc">Launch baseline inference.py as a subprocess</span>
+            </div>
+            <div class="api-endpoint">
+                <span class="api-method get">GET</span>
+                <span class="api-path">/health</span>
+                <span class="api-desc">Container health check endpoint</span>
+            </div>
+        </div>
+
+        <!-- Environment Variables -->
+        <div class="docs-panel" id="panel-env">
+            <table class="perf-table" style="margin-top: 0;">
+                <thead>
+                    <tr><th>Variable</th><th>Default</th><th>Description</th></tr>
+                </thead>
+                <tbody>
+                    <tr><td>HF_TOKEN</td><td>—</td><td>Hugging Face authentication token</td></tr>
+                    <tr><td>API_BASE_URL</td><td>https://router.huggingface.co/v1</td><td>LLM inference endpoint</td></tr>
+                    <tr><td>MODEL_NAME</td><td>Qwen/Qwen2.5-72B-Instruct</td><td>Model identifier for baseline</td></tr>
+                    <tr><td>MIGRATION_TASK</td><td>column-restructure</td><td>Default task for the environment</td></tr>
+                    <tr><td>PORT</td><td>7860</td><td>Server port (HF Spaces requirement)</td></tr>
+                    <tr><td>ENV_BASE_URL</td><td>http://localhost:7860</td><td>Environment server URL (for inference)</td></tr>
+                </tbody>
+            </table>
+        </div>
+
+        <!-- Adding Tasks -->
+        <div class="docs-panel" id="panel-add-task">
+            <h3 style="font-family: 'Outfit'; margin-bottom: 16px;">Contributing a New Task (3 Steps)</h3>
+            <p style="color: var(--text-dim); font-size: 0.9rem; margin-bottom: 20px;">The benchmark is designed to be extended. Adding a new adversarial task requires only three additions to <code>seeds.py</code>:</p>
+
+            <div class="code-block">
+                <button class="copy-btn">Copy</button>
+<pre># Step 1: Define seed data and the seed function
+TASK9_SOURCE_DDL = """CREATE TABLE ..."""
+TASK9_SOURCE_DATA = [(1, "..."), ...]
+
+def seed_task9(conn):
+    conn.executescript(TASK9_SOURCE_DDL)
+    conn.executemany("INSERT INTO ...", TASK9_SOURCE_DATA)
+    conn.commit()
+
+# Step 2: Define the golden (correct) migration
+def golden_task9(conn):
+    conn.execute("CREATE TABLE new_table ...")
+    conn.execute("INSERT INTO new_table SELECT ... FROM old_table")
+    conn.execute("DROP TABLE old_table")
+    conn.commit()
+
+# Step 3: Register in the TASKS dictionary
+TASKS["my-new-task"] = {
+    "seed_fn": seed_task9,
+    "golden_fn": golden_task9,
+    "target_ddl": "CREATE TABLE ...",
+    "description": "A description of the task.",
+    "difficulty": "hard",
+    "max_steps": 20,
+}</pre>
+            </div>
+        </div>
+    </div>
+</section>
+
+<!-- ═══════════════ TRY IT LIVE ═══════════════ -->
+<section class="section" id="try-it">
+    <div class="section-header reveal">
+        <div class="section-label">Interactive Demo</div>
+        <h2 class="section-title">Try It Live</h2>
+        <p class="section-desc">Send a real <code>POST /reset</code> request to the deployed Hugging Face Space and see the raw API response.</p>
+    </div>
+
+    <div class="try-it-container reveal">
+        <div class="card try-it-panel">
+            <h3>Request</h3>
+            <label style="color: var(--text-dim); font-size: 0.85rem; display: block; margin-bottom: 8px;">Select a task:</label>
+            <select id="try-it-select" class="try-it-select">
+                <option value="column-restructure">column-restructure (Easy)</option>
+                <option value="soft-delete-restoration">soft-delete-restoration (Easy)</option>
+                <option value="table-normalization">table-normalization (Medium)</option>
+                <option value="schema-version-merge">schema-version-merge (Medium)</option>
+                <option value="multi-entity-extraction">multi-entity-extraction (Medium)</option>
+                <option value="cascade-migration">cascade-migration (Hard)</option>
+                <option value="dual-source-consolidation">dual-source-consolidation (Hard)</option>
+                <option value="data-poisoning-quarantine">data-poisoning-quarantine (Extreme)</option>
+            </select>
+            <button id="try-it-btn" class="btn btn-primary" style="width: 100%; justify-content: center; margin-top: 8px;">
+                🚀 Send POST /reset
+            </button>
+            <div style="margin-top: 16px;">
+                <div class="code-block" style="margin: 0;">
+<pre>POST /reset HTTP/1.1
+Host: Eishaan-sql-migration-env.hf.space
+Content-Type: application/json
+
+{"task_name": "column-restructure"}</pre>
+                </div>
+            </div>
+        </div>
+        <div class="card try-it-panel">
+            <h3>Response</h3>
+            <span id="try-it-status" class="try-it-status idle">● Waiting for request</span>
+            <div id="try-it-output" class="try-it-output"><span class="placeholder">// Click "Send POST /reset" to see the API response here...</span></div>
+        </div>
+    </div>
+</section>
+
+<!-- ═══════════════ OPENENV COMPLIANCE ═══════════════ -->
+<section class="section" id="openenv">
+    <div class="section-header reveal">
+        <div class="section-label">Standards</div>
+        <h2 class="section-title">OpenEnv Compliance</h2>
+        <p class="section-desc">Fully validated against the OpenEnv specification for plug-and-play interoperability with RL training frameworks.</p>
+    </div>
+
+    <div class="arch-grid">
+        <div class="card reveal">
+            <h3 style="font-family: 'Outfit'; margin-bottom: 12px;">✅ openenv validate</h3>
+            <div class="code-block" style="margin-bottom: 0;">
+<pre>$ openenv validate
+[OK] sql_migration: Ready for multi-mode deployment</pre>
+            </div>
+        </div>
+        <div class="card reveal">
+            <h3 style="font-family: 'Outfit'; margin-bottom: 12px;">📋 openenv.yaml Manifest</h3>
+            <div class="code-block" style="margin-bottom: 0;">
+<pre>spec_version: 1
+name: sql_migration_env
+type: space
+runtime: fastapi
+app: server.app:app
+port: 7860</pre>
+            </div>
+        </div>
+        <div class="card arch-card-full reveal">
+            <h3 style="font-family: 'Outfit'; margin-bottom: 12px;">🔌 Framework Compatibility</h3>
+            <p style="color: var(--text-dim); font-size: 0.9rem;">The environment implements the standard OpenEnv <code>Environment</code> interface (<code>reset()</code>, <code>step()</code>, <code>state()</code>) with <code>SUPPORTS_CONCURRENT_SESSIONS = True</code>. Each WebSocket/HTTP session gets its own isolated in-memory SQLite database. Compatible with <strong>TRL</strong>, <strong>Unsloth</strong>, <strong>Agent Reinforcement Trainer</strong>, <strong>Lightning AI</strong>, and any framework that speaks the OpenEnv protocol.</p>
+        </div>
+    </div>
+</section>
+
+<!-- ═══════════════ FOOTER ═══════════════ -->
+<footer class="footer">
+    <div class="footer-links">
+        <a href="https://github.com/Eishaan-Khatri/sql-migration-env" target="_blank">GitHub</a>
+        <a href="https://huggingface.co/spaces/Eishaan/sql-migration-env" target="_blank">🤗 Hugging Face Space</a>
+        <a href="https://huggingface.co/spaces/Eishaan/sql-migration-env/api" target="_blank">Swagger API</a>
+    </div>
+    <p>
+        Designed & Engineered by <strong>Eishaan Khatri</strong><br>
+        Built for the <strong>Meta PyTorch OpenEnv Hackathon 2026</strong> · MIT License
+    </p>
+</footer>
+
+<script src="script.js"></script>
+</body>
+</html>
