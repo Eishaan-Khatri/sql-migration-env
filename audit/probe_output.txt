@@ -1,0 +1,14 @@
+task                          no_op  schema  1 lost  wrong  golden |  Qwen  GPT-OSS
+-----------------------------------------------------------------------------------
+column-restructure             0.68    0.50    0.92   0.76    0.99 |  0.99     0.99   (rows lost 1, cells changed 5)
+soft-delete-restoration        0.64    0.50    0.95   0.76    0.99 |  0.99     0.99   (rows lost 1, cells changed 35)
+table-normalization            0.29    0.50    0.88   0.76    0.99 |  0.94     0.99   (rows lost 3, cells changed 20)
+schema-version-merge           0.28    0.50    0.96   0.76    0.99 |  0.93     0.98   (rows lost 1, cells changed 51)
+multi-entity-extraction        0.29    0.50    0.90   0.76    0.99 |  0.35     0.65   (rows lost 8, cells changed 84)
+cascade-migration              0.61    0.50    0.86   0.76    0.99 |  0.61     0.83   (rows lost 5, cells changed 25)
+dual-source-consolidation      0.25    0.50    0.89   0.76    0.99 |  0.28     0.38   (rows lost 6, cells changed 136)
+data-poisoning-quarantine      0.53    0.50    0.89   0.76    0.99 |  0.02     0.15   (rows lost 3, cells changed 51)
+-----------------------------------------------------------------------------------
+mean                           0.45    0.50    0.90   0.76    0.99 |  0.64     0.74
+
+Tasks where a reported model score is below the do-nothing score: ['data-poisoning-quarantine']
